@@ -1,0 +1,561 @@
+[
+  {
+    "method": "POST",
+    "path": "/api/auth/google",
+    "operation_id": "",
+    "tags": [
+      "Authentication"
+    ],
+    "auth_required": true,
+    "role": "PATIENT / DOCTOR / ADMIN",
+    "description": "Google Auth"
+  },
+  {
+    "method": "POST",
+    "path": "/api/auth/register",
+    "operation_id": "",
+    "tags": [
+      "Authentication"
+    ],
+    "auth_required": false,
+    "role": "PATIENT / DOCTOR / ADMIN",
+    "description": "Register Account"
+  },
+  {
+    "method": "GET",
+    "path": "/api/auth/me",
+    "operation_id": "",
+    "tags": [
+      "Authentication"
+    ],
+    "auth_required": true,
+    "role": "PATIENT / DOCTOR / ADMIN",
+    "description": "Get Me"
+  },
+  {
+    "method": "GET",
+    "path": "/api/auth/health",
+    "operation_id": "",
+    "tags": [
+      "Authentication"
+    ],
+    "auth_required": false,
+    "role": "PATIENT / DOCTOR / ADMIN",
+    "description": "Health Check"
+  },
+  {
+    "method": "POST",
+    "path": "/api/patients/onboarding",
+    "operation_id": "",
+    "tags": [
+      "Patient Onboarding & Profile"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Complete Onboarding"
+  },
+  {
+    "method": "GET",
+    "path": "/api/patients/profile",
+    "operation_id": "",
+    "tags": [
+      "Patient Onboarding & Profile"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Get Patient Profile"
+  },
+  {
+    "method": "GET",
+    "path": "/api/doctor/test",
+    "operation_id": "",
+    "tags": [
+      "Doctor RBAC"
+    ],
+    "auth_required": true,
+    "role": "DOCTOR",
+    "description": "Doctor Test Endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/test",
+    "operation_id": "",
+    "tags": [
+      "Admin RBAC"
+    ],
+    "auth_required": true,
+    "role": "ADMIN",
+    "description": "Admin Test Endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/profile",
+    "operation_id": "",
+    "tags": [
+      "Patient Profile"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Get Profile"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/profile",
+    "operation_id": "",
+    "tags": [
+      "Patient Profile"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Update Profile"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/profile",
+    "operation_id": "",
+    "tags": [
+      "Patient Profile"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Get Profile"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v1/profile",
+    "operation_id": "",
+    "tags": [
+      "Patient Profile"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Update Profile"
+  },
+  {
+    "method": "GET",
+    "path": "/api/dashboard",
+    "operation_id": "",
+    "tags": [
+      "Patient Dashboard"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Get Dashboard"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/dashboard",
+    "operation_id": "",
+    "tags": [
+      "Patient Dashboard"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Get Dashboard"
+  },
+  {
+    "method": "POST",
+    "path": "/api/consultation",
+    "operation_id": "",
+    "tags": [
+      "AI Pre-Consultation"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Start Consultation"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/consultation",
+    "operation_id": "",
+    "tags": [
+      "AI Pre-Consultation"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Start Consultation"
+  },
+  {
+    "method": "POST",
+    "path": "/api/consultation/{id}/chief-complaint",
+    "operation_id": "",
+    "tags": [
+      "AI Pre-Consultation"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Submit Chief Complaint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/consultation/{id}/chief-complaint",
+    "operation_id": "",
+    "tags": [
+      "AI Pre-Consultation"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Submit Chief Complaint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/consultation/{id}/next-question",
+    "operation_id": "",
+    "tags": [
+      "AI Pre-Consultation"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Get Next Question"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/consultation/{id}/next-question",
+    "operation_id": "",
+    "tags": [
+      "AI Pre-Consultation"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Get Next Question"
+  },
+  {
+    "method": "POST",
+    "path": "/api/consultation/{id}/answer",
+    "operation_id": "",
+    "tags": [
+      "AI Pre-Consultation"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Submit Answer"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/consultation/{id}/answer",
+    "operation_id": "",
+    "tags": [
+      "AI Pre-Consultation"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Submit Answer"
+  },
+  {
+    "method": "GET",
+    "path": "/api/consultation/{id}/review",
+    "operation_id": "",
+    "tags": [
+      "AI Pre-Consultation"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Review Consultation"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/consultation/{id}/review",
+    "operation_id": "",
+    "tags": [
+      "AI Pre-Consultation"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Review Consultation"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/consultation/{id}/information/{info_id}",
+    "operation_id": "",
+    "tags": [
+      "AI Pre-Consultation"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Correct Information"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v1/consultation/{id}/information/{info_id}",
+    "operation_id": "",
+    "tags": [
+      "AI Pre-Consultation"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Correct Information"
+  },
+  {
+    "method": "POST",
+    "path": "/api/consultation/{id}/complete",
+    "operation_id": "",
+    "tags": [
+      "AI Pre-Consultation"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Complete Consultation"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/consultation/{id}/complete",
+    "operation_id": "",
+    "tags": [
+      "AI Pre-Consultation"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Complete Consultation"
+  },
+  {
+    "method": "GET",
+    "path": "/api/consultation/history",
+    "operation_id": "",
+    "tags": [
+      "AI Pre-Consultation"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "List Consultation History"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/consultation/history",
+    "operation_id": "",
+    "tags": [
+      "AI Pre-Consultation"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "List Consultation History"
+  },
+  {
+    "method": "POST",
+    "path": "/api/consultation/{id}/voice/start",
+    "operation_id": "",
+    "tags": [
+      "Voice Interaction"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Start Voice Session"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/consultation/{id}/voice/start",
+    "operation_id": "",
+    "tags": [
+      "Voice Interaction"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Start Voice Session"
+  },
+  {
+    "method": "POST",
+    "path": "/api/consultation/{id}/voice/stop",
+    "operation_id": "",
+    "tags": [
+      "Voice Interaction"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Stop Voice Session"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/consultation/{id}/voice/stop",
+    "operation_id": "",
+    "tags": [
+      "Voice Interaction"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Stop Voice Session"
+  },
+  {
+    "method": "POST",
+    "path": "/api/consultation/{id}/voice/pause",
+    "operation_id": "",
+    "tags": [
+      "Voice Interaction"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Pause Voice Session"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/consultation/{id}/voice/pause",
+    "operation_id": "",
+    "tags": [
+      "Voice Interaction"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Pause Voice Session"
+  },
+  {
+    "method": "POST",
+    "path": "/api/consultation/{id}/voice/resume",
+    "operation_id": "",
+    "tags": [
+      "Voice Interaction"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Resume Voice Session"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/consultation/{id}/voice/resume",
+    "operation_id": "",
+    "tags": [
+      "Voice Interaction"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Resume Voice Session"
+  },
+  {
+    "method": "POST",
+    "path": "/api/consultation/{id}/voice/transcribe",
+    "operation_id": "",
+    "tags": [
+      "Voice Interaction"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Transcribe Voice Audio"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/consultation/{id}/voice/transcribe",
+    "operation_id": "",
+    "tags": [
+      "Voice Interaction"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Transcribe Voice Audio"
+  },
+  {
+    "method": "GET",
+    "path": "/api/history",
+    "operation_id": "",
+    "tags": [
+      "Clinical History"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Get Clinical Histories"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/history",
+    "operation_id": "",
+    "tags": [
+      "Clinical History"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Get Clinical Histories"
+  },
+  {
+    "method": "GET",
+    "path": "/api/history/{id}",
+    "operation_id": "",
+    "tags": [
+      "Clinical History"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Get Clinical History By Id"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/history/{id}",
+    "operation_id": "",
+    "tags": [
+      "Clinical History"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Update Clinical History"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/history/{id}",
+    "operation_id": "",
+    "tags": [
+      "Clinical History"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Get Clinical History By Id"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v1/history/{id}",
+    "operation_id": "",
+    "tags": [
+      "Clinical History"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Update Clinical History"
+  },
+  {
+    "method": "GET",
+    "path": "/api/history/consultation/{consultation_id}",
+    "operation_id": "",
+    "tags": [
+      "Clinical History"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Get Clinical History By Consultation"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/history/consultation/{consultation_id}",
+    "operation_id": "",
+    "tags": [
+      "Clinical History"
+    ],
+    "auth_required": true,
+    "role": "PATIENT",
+    "description": "Get Clinical History By Consultation"
+  },
+  {
+    "method": "GET",
+    "path": "/api/health/ai",
+    "operation_id": "",
+    "tags": [
+      "Health & AI Status"
+    ],
+    "auth_required": true,
+    "role": "PATIENT / DOCTOR / ADMIN",
+    "description": "Get Ai Health"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/health/ai",
+    "operation_id": "",
+    "tags": [
+      "Health & AI Status"
+    ],
+    "auth_required": true,
+    "role": "PATIENT / DOCTOR / ADMIN",
+    "description": "Get Ai Health"
+  },
+  {
+    "method": "GET",
+    "path": "/",
+    "operation_id": "",
+    "tags": [],
+    "auth_required": false,
+    "role": "PATIENT / DOCTOR / ADMIN",
+    "description": "Root"
+  }
+]

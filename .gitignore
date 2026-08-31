@@ -1,0 +1,37 @@
+# Environment & secret configuration files
+.env
+*.env
+.env.*
+!.env.example
+backend/.env
+frontend/.env
+scratch/
+backend/scratch/
+
+# Logs, crash dumps, and temp files
+*.log
+hs_err_pid*.log
+replay_pid*.log
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+backend/mediassist.db
+
+# Python & Virtual Environment
+__pycache__/
+*.pyc
+venv/
+.venv/
+.pytest_cache/
+
+# Node & Expo
+node_modules/
+.expo/
+dist/
+web-build/
+
+# OS metadata
+.DS_Store
+Thumbs.db
