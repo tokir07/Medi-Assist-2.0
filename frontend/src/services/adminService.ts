@@ -275,5 +275,27 @@ export const adminService = {
 
     const res = await api.get(`/admin/audit-logs?${params.toString()}`);
     return res.data;
+  },
+
+  async getOrganizations(): Promise<{ organizations: any[] }> {
+    const res = await api.get('/admin/organizations');
+    return res.data;
+  },
+
+  async createOrganization(payload: any): Promise<any> {
+    const res = await api.post('/admin/organizations', payload);
+    return res.data;
+  },
+
+  async getDepartments(organizationId?: string): Promise<{ departments: any[] }> {
+    const url = organizationId ? `/admin/departments?organization_id=${organizationId}` : '/admin/departments';
+    const res = await api.get(url);
+    return res.data;
+  },
+
+  async createDepartment(payload: any): Promise<any> {
+    const res = await api.post('/admin/departments', payload);
+    return res.data;
   }
 };
+
