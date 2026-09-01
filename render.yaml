@@ -59,7 +59,7 @@ services:
         fromService:
           type: web
           name: mediassist-backend
-          property: url
+          property: host
 
 databases:
   # --------------------------------------------------
@@ -67,6 +67,6 @@ databases:
   # --------------------------------------------------
   - name: mediassist-db
     databaseName: mediassist
-    user: postgres
+    user: mediassist
     region: singapore
     plan: free
