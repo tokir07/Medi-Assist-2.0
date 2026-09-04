@@ -79,8 +79,11 @@ class DoctorPatientDetail(BaseModel):
     reports: List[Dict[str, Any]] = []
     prescriptions: List[Dict[str, Any]] = []
     appointments: List[Dict[str, Any]] = []
+    ai_conversations: List[Dict[str, Any]] = []
+    voice_sessions: List[Dict[str, Any]] = []
     emergency_contact: Optional[Dict[str, Any]] = None
     ai_health_summary: Optional[Dict[str, Any]] = None
+    consolidated_summary: Optional[Dict[str, Any]] = None
 
 class DoctorConsultationSubmit(BaseModel):
     appointment_id: str

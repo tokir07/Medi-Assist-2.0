@@ -144,6 +144,32 @@ def get_patient_detail(
 ):
     return doctor_service.get_patient_detail(db, current_user, patient_id)
 
+@router.get("/patients/{patient_id}/ai-conversations/{conversation_id}")
+def get_patient_ai_conversation_transcript(
+    patient_id: str,
+    conversation_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    return doctor_service.get_patient_ai_conversation_transcript(db, current_user, patient_id, conversation_id)
+
+@router.get("/patients/{patient_id}/voice-sessions/{session_id}")
+def get_patient_voice_transcript(
+    patient_id: str,
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    return doctor_service.get_patient_voice_transcript(db, current_user, patient_id, session_id)
+
+@router.post("/patients/{patient_id}/medical-summary/generate")
+def generate_patient_medical_summary(
+    patient_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    return doctor_service.generate_patient_medical_summary(db, current_user, patient_id)
+
 @router.post("/consultation/submit")
 def submit_consultation(
     payload: DoctorConsultationSubmit,

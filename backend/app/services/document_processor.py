@@ -3,6 +3,7 @@ import re
 import json
 import logging
 from typing import Dict, Any, Optional, Tuple, List
+import base64
 try:
     from pypdf import PdfReader
     PYPDF_AVAILABLE = True
@@ -10,11 +11,20 @@ except ImportError:
     PdfReader = None
     PYPDF_AVAILABLE = False
 
+try:
+    import pymupdf as fitz  # PyMuPDF
+    FITZ_AVAILABLE = True
+except ImportError:
+    fitz = None
+    FITZ_AVAILABLE = False
+
 from app.core.config import settings
 from app.services.ai.openrouter_service import OpenRouterClinicalAIService
 from app.services.parameter_dictionary import lookup_parameter, categorize_parameter, COMMON_PARAMETER_DICTIONARY
 
-logger = logging.getLogger("mediassist.document_processor")
+from app.core.logging_config import get_logger
+
+logger = get_logger("DOC_PROCESSOR")
 
 DYNAMIC_EXTRACTION_PROMPT = """You are MediAssist Clinical Document Intelligence Specialist.
 Analyze the following medical report text and dynamically extract ALL meaningful clinical parameters, values, reference ranges, and observations across all pages.
@@ -95,26 +105,160 @@ class DocumentProcessorService:
     def __init__(self):
         self.openrouter_service = OpenRouterClinicalAIService()
 
-    def extract_text_from_pdf(self, file_path: str) -> str:
+    def extract_text_from_image(self, file_path: str) -> str:
         """
-        Extracts raw text from a PDF file using pypdf.
+        Extracts verbatim clinical text from image files (.png, .jpg, .jpeg, .webp) using OpenRouter Vision model.
         """
         if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Image file not found: {file_path}")
+
+        ext = os.path.splitext(file_path)[1].lower().replace('.', '')
+        if ext == 'jpg': ext = 'jpeg'
+        if ext not in ['jpeg', 'png', 'webp']: ext = 'jpeg'
+
+        try:
+            with open(file_path, 'rb') as f:
+                b64_data = base64.b64encode(f.read()).decode('utf-8')
+
+            if self.openrouter_service._is_key_configured():
+                client = self.openrouter_service._get_client()
+                vision_models = [settings.OPENROUTER_MODEL or "openai/gpt-4o-mini", "google/gemini-2.5-flash"]
+                for model_name in vision_models:
+                    try:
+                        response = client.chat.completions.create(
+                            model=model_name,
+                            messages=[
+                                {"role": "system", "content": "You are an automated OCR data entry tool. Perform literal text recognition of all visible words, letters, numbers, and symbols in the image."},
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": "Read and transcribe all printed text in this document image verbatim into markdown format."
+                                        },
+                                        {
+                                            "type": "image_url",
+                                            "image_url": {
+                                                "url": f"data:image/{ext};base64,{b64_data}"
+                                            }
+                                        }
+                                    ]
+                                }
+                            ],
+                            max_tokens=3000,
+                            temperature=0.0
+                        )
+                        text = response.choices[0].message.content
+                        if text and len(text.strip()) > 20 and not text.lower().startswith("i'm sorry") and "can't assist" not in text.lower():
+                            return text.strip()
+                    except Exception as err:
+                        logger.warning(f"Vision OCR model {model_name} failed: {err}")
+        except Exception as e:
+            logger.warning(f"Vision OCR failed for image {file_path}: {e}")
+
+        return "No machine-readable text found in image document."
+
+    def extract_text_from_pdf(self, file_path: str) -> str:
+        """
+        Extracts raw text from PDF using PyMuPDF (fitz) or pypdf across all pages.
+        If direct text is missing or unreadable, triggers PyMuPDF page rendering + OpenRouter Vision OCR fallback.
+        """
+        logger.info(f"[PDF_EXTRACT] Starting text extraction for '{os.path.basename(file_path)}'")
+        if not os.path.exists(file_path):
+            logger.error(f"[PDF_EXTRACT_ERROR] File not found: {file_path}")
             raise FileNotFoundError(f"PDF file not found at path: {file_path}")
 
         extracted_pages = []
-        try:
-            reader = PdfReader(file_path)
-            for idx, page in enumerate(reader.pages):
-                text = page.extract_text()
-                if text:
-                    extracted_pages.append(f"--- Page {idx + 1} ---\n{text.strip()}")
-            
-            full_text = "\n\n".join(extracted_pages).strip()
-            return full_text if full_text else "No machine-readable text found in PDF."
-        except Exception as e:
-            logger.warning(f"pypdf extraction failed for {file_path}: {e}")
-            return f"Extraction failed: {str(e)}"
+        
+        # 1. Primary Extraction: PyMuPDF (fitz)
+        if FITZ_AVAILABLE:
+            try:
+                doc = fitz.open(file_path)
+                for idx, page in enumerate(doc):
+                    text = page.get_text()
+                    if text and text.strip():
+                        extracted_pages.append(f"--- Page {idx + 1} ---\n{text.strip()}")
+                doc.close()
+                logger.info(f"[PDF_EXTRACT] PyMuPDF extracted {len(extracted_pages)} text pages")
+            except Exception as e:
+                logger.warning(f"[PDF_EXTRACT_WARNING] PyMuPDF extraction failed for {file_path}: {e}")
+
+        # 2. Secondary Fallback: pypdf if fitz didn't yield text
+        if not extracted_pages and PYPDF_AVAILABLE:
+            try:
+                reader = PdfReader(file_path)
+                for idx, page in enumerate(reader.pages):
+                    text = page.extract_text()
+                    if text and text.strip():
+                        extracted_pages.append(f"--- Page {idx + 1} ---\n{text.strip()}")
+                logger.info(f"[PDF_EXTRACT] pypdf extracted {len(extracted_pages)} text pages")
+            except Exception as e:
+                logger.warning(f"[PDF_EXTRACT_WARNING] pypdf extraction failed for {file_path}: {e}")
+
+        full_text = "\n\n".join(extracted_pages).strip()
+
+        # 3. Vision OCR Fallback for Scanned / Image PDFs
+        if (not full_text or len(full_text) < 30) and FITZ_AVAILABLE and self.openrouter_service._is_key_configured():
+            logger.info(f"PDF {file_path} contains minimal/no machine text. Executing Vision OCR page rendering...")
+            ocr_pages = []
+            try:
+                doc = fitz.open(file_path)
+                client = self.openrouter_service._get_client()
+                for idx in range(min(5, len(doc))):
+                    page = doc[idx]
+                    pix = page.get_pixmap(dpi=150)
+                    img_bytes = pix.tobytes("png")
+                    b64_data = base64.b64encode(img_bytes).decode("utf-8")
+
+                    vision_models = [settings.OPENROUTER_MODEL or "openai/gpt-4o-mini", "google/gemini-2.5-flash"]
+                    for model_name in vision_models:
+                        try:
+                            response = client.chat.completions.create(
+                                model=model_name,
+                                messages=[
+                                    {"role": "system", "content": "You are an automated OCR data entry tool. Perform literal text recognition of all visible words, letters, numbers, and symbols in the image."},
+                                    {
+                                        "role": "user",
+                                        "content": [
+                                            {
+                                                "type": "text",
+                                                "text": f"Transcribe all printed text on Page {idx + 1} of this scanned medical report verbatim into markdown format."
+                                            },
+                                            {
+                                                "type": "image_url",
+                                                "image_url": {
+                                                    "url": f"data:image/png;base64,{b64_data}"
+                                                }
+                                            }
+                                        ]
+                                    }
+                                ],
+                                max_tokens=2500,
+                                temperature=0.0
+                            )
+                            page_ocr = response.choices[0].message.content
+                            if page_ocr and page_ocr.strip() and not page_ocr.lower().startswith("i'm sorry") and "can't assist" not in page_ocr.lower():
+                                ocr_pages.append(f"--- Page {idx + 1} (OCR) ---\n{page_ocr.strip()}")
+                                break
+                        except Exception as err:
+                            logger.warning(f"PDF Vision OCR model {model_name} failed: {err}")
+                doc.close()
+
+                if ocr_pages:
+                    full_text = "\n\n".join(ocr_pages).strip()
+            except Exception as e:
+                logger.warning(f"Vision OCR fallback failed for scanned PDF {file_path}: {e}")
+
+        return full_text if full_text else "No machine-readable text found in PDF."
+
+    def extract_document_text(self, file_path: str, file_type: str = "PDF") -> str:
+        """
+        Unified extractor handling both PDFs and Image formats (.png, .jpg, .jpeg, .webp).
+        """
+        ft = (file_type or "PDF").upper()
+        if ft in ["JPG", "JPEG", "PNG", "WEBP"]:
+            return self.extract_text_from_image(file_path)
+        return self.extract_text_from_pdf(file_path)
 
     def parse_structured_data(self, document_text: str, file_name: str = "") -> Dict[str, Any]:
         """
@@ -699,7 +843,7 @@ Clinical Findings & Observations:
 {chr(10).join(findings) if findings else "None"}
 
 Raw Document Excerpt:
-{raw_text[:2500]}
+{raw_text[:12000]}
 
 Generate a structured JSON summary with:
 1. "quick_summary": A concise 1-2 sentence overview of the report and any out-of-range findings.

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from app.database.database import get_db
 from app.models.ai_conversation import AIConversation, AIMessage, AISummary
+from app.models.patient_portal import VoiceSession, VoiceMessage, VoiceSessionStatus
 from app.database.models import Patient
 from app.core.dependencies import get_current_patient, get_current_user
 from app.services.ai.ai_orchestrator import ai_orchestrator, MEDIASSIST_SYSTEM_PROMPT
@@ -545,30 +546,168 @@ def get_voice_history(
     db: Session = Depends(get_db)
 ):
     """
-    Returns authentic conversation history from PostgreSQL for the Voice Assistant history panel.
+    Returns authentic voice session history from PostgreSQL for the Voice Assistant history panel.
     """
+    voice_sessions = db.query(VoiceSession).filter(
+        VoiceSession.patient_id == current_patient.id
+    ).order_by(VoiceSession.updated_at.desc()).limit(20).all()
+
+    results = []
+    if voice_sessions:
+        for vs in voice_sessions:
+            last_msg = db.query(VoiceMessage).filter(
+                VoiceMessage.voice_session_id == vs.id
+            ).order_by(VoiceMessage.sequence_number.desc()).first()
+
+            first_user_msg = db.query(VoiceMessage).filter(
+                VoiceMessage.voice_session_id == vs.id,
+                VoiceMessage.role == "user"
+            ).order_by(VoiceMessage.sequence_number.asc()).first()
+
+            duration_str = "00:30"
+            if vs.started_at and vs.ended_at:
+                secs = int((vs.ended_at - vs.started_at).total_seconds())
+                mins, s = divmod(max(secs, 10), 60)
+                duration_str = f"{mins:02d}:{s:02d}"
+
+            results.append({
+                "id": vs.id,
+                "title": vs.summary or (first_user_msg.content[:45] if first_user_msg else "Voice Session"),
+                "timestamp": vs.updated_at.strftime("%d %b %Y, %I:%M %p") if vs.updated_at else "Recent",
+                "duration": duration_str,
+                "transcript": first_user_msg.content if first_user_msg else (vs.transcript or "Voice interaction"),
+                "response": last_msg.content if last_msg else "Session active",
+                "consultation_state": vs.status.value if hasattr(vs.status, "value") else str(vs.status),
+                "conversation_mode": vs.conversation_mode,
+                "key_points": json.loads(vs.key_points) if vs.key_points else []
+            })
+        return results
+
+    # Fallback to AIConversation
     conversations = db.query(AIConversation).filter(
         AIConversation.patient_id == current_patient.id,
         AIConversation.is_deleted == False
     ).order_by(AIConversation.updated_at.desc()).limit(15).all()
 
-    results = []
     for c in conversations:
         last_msg = db.query(AIMessage).filter(
             AIMessage.conversation_id == c.id
         ).order_by(AIMessage.created_at.desc()).first()
+
+        first_msg = db.query(AIMessage).filter(
+            AIMessage.conversation_id == c.id,
+            AIMessage.sender_role == "user"
+        ).order_by(AIMessage.created_at.asc()).first()
 
         results.append({
             "id": c.id,
             "title": c.title,
             "timestamp": c.updated_at.strftime("%d %b %Y, %I:%M %p") if c.updated_at else "Recent",
             "duration": "00:30",
-            "transcript": c.summary_preview or c.title,
+            "transcript": first_msg.content if first_msg else (c.summary_preview or c.title),
             "response": last_msg.content if last_msg else "Consultation completed.",
-            "consultation_state": c.consultation_state
+            "consultation_state": c.consultation_state,
+            "conversation_mode": "HEALTH_CONSULTATION",
+            "key_points": [c.title]
         })
 
     return results
+
+@router.get("/voice/sessions/{session_id}/full")
+def get_full_voice_session(
+    session_id: str,
+    current_patient: Patient = Depends(get_current_patient),
+    db: Session = Depends(get_db)
+):
+    """
+    Returns complete multi-turn voice session including sequential messages transcript,
+    summary, key points, and extracted medical context.
+    """
+    v_session = db.query(VoiceSession).filter(
+        VoiceSession.id == session_id,
+        VoiceSession.patient_id == current_patient.id
+    ).first()
+
+    if not v_session:
+        v_session = db.query(VoiceSession).filter(
+            VoiceSession.ai_conversation_id == session_id,
+            VoiceSession.patient_id == current_patient.id
+        ).first()
+
+    if v_session:
+        msgs = db.query(VoiceMessage).filter(
+            VoiceMessage.voice_session_id == v_session.id
+        ).order_by(VoiceMessage.sequence_number.asc()).all()
+
+        formatted_msgs = [
+            {
+                "id": m.id,
+                "role": m.role,
+                "content": m.content,
+                "sequence_number": m.sequence_number,
+                "timestamp": m.timestamp.strftime("%I:%M %p") if m.timestamp else "",
+                "message_type": m.message_type
+            }
+            for m in msgs
+        ]
+
+        duration_str = "00:30"
+        if v_session.started_at and v_session.ended_at:
+            secs = int((v_session.ended_at - v_session.started_at).total_seconds())
+            mins, s = divmod(max(secs, 10), 60)
+            duration_str = f"{mins:02d}:{s:02d}"
+
+        return {
+            "session_id": v_session.id,
+            "patient_id": v_session.patient_id,
+            "started_at": v_session.started_at.strftime("%d %b %Y, %I:%M %p") if v_session.started_at else "",
+            "ended_at": v_session.ended_at.strftime("%I:%M %p") if v_session.ended_at else "",
+            "status": v_session.status.value if hasattr(v_session.status, "value") else str(v_session.status),
+            "language": v_session.language,
+            "conversation_mode": v_session.conversation_mode,
+            "duration": duration_str,
+            "summary": v_session.summary or "Voice session completed.",
+            "key_points": json.loads(v_session.key_points) if v_session.key_points else [],
+            "extracted_medical_context": json.loads(v_session.extracted_medical_context) if v_session.extracted_medical_context else {},
+            "messages": formatted_msgs
+        }
+
+    # Fallback to AIConversation
+    conv = db.query(AIConversation).filter(
+        AIConversation.id == session_id,
+        AIConversation.patient_id == current_patient.id
+    ).first()
+
+    if not conv:
+        raise HTTPException(status_code=404, detail="Voice session not found")
+
+    ai_msgs = db.query(AIMessage).filter(AIMessage.conversation_id == conv.id).order_by(AIMessage.created_at.asc()).all()
+    formatted_msgs = [
+        {
+            "id": m.id,
+            "role": "user" if m.sender_role == "user" else "assistant",
+            "content": m.content,
+            "sequence_number": idx + 1,
+            "timestamp": m.created_at.strftime("%I:%M %p") if m.created_at else "",
+            "message_type": m.message_type or "voice_transcription"
+        }
+        for idx, m in enumerate(ai_msgs)
+    ]
+
+    return {
+        "session_id": conv.id,
+        "patient_id": conv.patient_id,
+        "started_at": conv.created_at.strftime("%d %b %Y, %I:%M %p") if conv.created_at else "",
+        "ended_at": conv.updated_at.strftime("%I:%M %p") if conv.updated_at else "",
+        "status": conv.status,
+        "language": "en",
+        "conversation_mode": "HEALTH_CONSULTATION",
+        "duration": "00:45",
+        "summary": conv.clinical_summary or conv.summary_preview or "Voice session completed.",
+        "key_points": [conv.title] if conv.title else [],
+        "extracted_medical_context": json.loads(conv.structured_context) if conv.structured_context else {},
+        "messages": formatted_msgs
+    }
 
 @router.post("/voice/sessions/{conversation_id}/generate-report")
 def generate_voice_session_report(

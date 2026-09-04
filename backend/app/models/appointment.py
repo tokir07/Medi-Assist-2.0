@@ -35,8 +35,8 @@ class Appointment(Base):
     session_name = Column(String(100), nullable=True, default="General Consultation")
     rescheduled_from_id = Column(String(36), nullable=True)
 
-    # Status: Confirmed, Pending, Completed, Cancelled, Rescheduled, Rejected
-    status = Column(String(50), nullable=False, default="Confirmed", index=True)
+    # Status: Pending, Confirmed, Completed, Cancelled, Rescheduled, Declined
+    status = Column(String(50), nullable=False, default="Pending", index=True)
 
     # Notes & Clinical Instructions
     notes = Column(Text, nullable=True) # Patient reason for visit / chief complaint

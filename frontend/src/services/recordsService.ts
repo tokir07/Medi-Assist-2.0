@@ -133,6 +133,31 @@ export const recordsService = {
     return res.data;
   },
 
+  async uploadMultipleRecords(formData: FormData, onProgress?: (percent: number) => void): Promise<MedicalRecordItem[]> {
+    const res = await api.post<MedicalRecordItem[]>('/records/upload-multiple', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+      onUploadProgress: (progressEvent) => {
+        if (progressEvent.total && onProgress) {
+          const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          onProgress(percent);
+        }
+      },
+    });
+    return res.data;
+  },
+
+  async retryProcessing(id: string): Promise<MedicalRecordItem> {
+    const res = await api.post<MedicalRecordItem>(`/records/${id}/retry`);
+    return res.data;
+  },
+
+  async backfillRecords(): Promise<{ reprocessed_count: number; reprocessed_record_ids: string[] }> {
+    const res = await api.post<{ reprocessed_count: number; reprocessed_record_ids: string[] }>('/records/backfill');
+    return res.data;
+  },
+
   async getRecordDetails(id: string): Promise<MedicalRecordItem> {
     const res = await api.get<MedicalRecordItem>(`/records/${id}`);
     return res.data;

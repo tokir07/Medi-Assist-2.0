@@ -227,13 +227,13 @@ export const DoctorDashboard: React.FC = () => {
         >
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-slate-500">Unread Messages</span>
-            <div className="p-2.5 rounded-xl bg-purple-50 text-purple-600 group-hover:scale-105 transition-transform">
+            <div className="p-2.5 rounded-xl bg-teal-50 text-teal-600 group-hover:scale-105 transition-transform">
               <MessageSquare className="w-5 h-5" />
             </div>
           </div>
           <div className="mt-3 flex items-baseline justify-between">
             <span className="text-2xl font-bold text-slate-900">{stats.unread_messages_count}</span>
-            <span className="text-[11px] font-semibold text-purple-600 flex items-center gap-1">
+            <span className="text-[11px] font-semibold text-teal-600 flex items-center gap-1">
               <span>Open Chat</span>
               <ArrowRight className="w-3 h-3" />
             </span>
@@ -397,10 +397,10 @@ export const DoctorDashboard: React.FC = () => {
               <button
                 type="button"
                 onClick={() => navigate('/doctor/prescriptions')}
-                className="p-3 rounded-xl bg-slate-50 hover:bg-purple-50 hover:border-purple-300 border border-slate-200/80 text-left transition-all cursor-pointer group"
+                className="p-3 rounded-xl bg-slate-50 hover:bg-teal-50 hover:border-teal-300 border border-slate-200/80 text-left transition-all cursor-pointer group"
               >
-                <Pill className="w-4 h-4 text-purple-600 mb-1" />
-                <span className="block text-xs font-bold text-slate-800 group-hover:text-purple-700">New Prescription</span>
+                <Pill className="w-4 h-4 text-teal-600 mb-1" />
+                <span className="block text-xs font-bold text-slate-800 group-hover:text-teal-700">New Prescription</span>
               </button>
 
               <button

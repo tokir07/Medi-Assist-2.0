@@ -2,6 +2,7 @@ import React, { Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { RoleRoute } from './routes/RoleRoute';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 
 import { Login } from './pages/Login';
 import { Register } from './pages/Register';
@@ -16,6 +17,7 @@ const VoiceAssistantPage = lazy(() => import('./pages/VoiceAssistantPage').then(
 const MyRecordsPage = lazy(() => import('./pages/MyRecordsPage').then(m => ({ default: m.MyRecordsPage })));
 const PrescriptionsPage = lazy(() => import('./pages/PrescriptionsPage').then(m => ({ default: m.PrescriptionsPage })));
 const AppointmentsPage = lazy(() => import('./pages/AppointmentsPage').then(m => ({ default: m.AppointmentsPage })));
+const MessagesPage = lazy(() => import('./pages/MessagesPage').then(m => ({ default: m.MessagesPage })));
 const HealthTipsPage = lazy(() => import('./pages/HealthTipsPage').then(m => ({ default: m.HealthTipsPage })));
 const RemindersPage = lazy(() => import('./pages/RemindersPage').then(m => ({ default: m.RemindersPage })));
 const ProfilePage = lazy(() => import('./pages/ProfilePage').then(m => ({ default: m.ProfilePage })));
@@ -183,6 +185,18 @@ export const AppContent: React.FC = () => {
           <RoleRoute allowedRoles={['PATIENT']}>
             <AppLayout>
               <AppointmentsPage />
+            </AppLayout>
+          </RoleRoute>
+        }
+      />
+
+      {/* Patient Messages Route */}
+      <Route
+        path="/patient/messages"
+        element={
+          <RoleRoute allowedRoles={['PATIENT']}>
+            <AppLayout>
+              <MessagesPage />
             </AppLayout>
           </RoleRoute>
         }
@@ -503,11 +517,15 @@ export const AppContent: React.FC = () => {
 
 export const App: React.FC = () => {
   return (
-    <Router>
-      <AuthProvider>
-        <AppContent />
-      </AuthProvider>
-    </Router>
+    <ErrorBoundary>
+      <Router>
+        <AuthProvider>
+          <ErrorBoundary>
+            <AppContent />
+          </ErrorBoundary>
+        </AuthProvider>
+      </Router>
+    </ErrorBoundary>
   );
 };
 

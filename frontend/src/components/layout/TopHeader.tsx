@@ -27,6 +27,7 @@ const PAGE_TITLES: Record<string, { title: string; subtitle: string }> = {
   '/patient/records': { title: 'Medical Records', subtitle: 'Encrypted document vault, lab results & clinical reports' },
   '/patient/prescriptions': { title: 'Prescriptions', subtitle: 'Active medication schedules, dosages & refill tracking' },
   '/patient/appointments': { title: 'Appointments', subtitle: 'Clinical visits, schedules & physician consultations' },
+  '/patient/messages': { title: 'Doctor Messages', subtitle: 'Secure direct communication with your confirmed doctors' },
   '/patient/tips': { title: 'Health Tips', subtitle: 'Evidence-based preventive health & wellness education' },
   '/patient/health-tips': { title: 'Health Tips', subtitle: 'Evidence-based preventive health & wellness education' },
   '/patient/reminders': { title: 'Health Reminders', subtitle: 'Daily medication schedules, appointment alerts & wellness tasks' },

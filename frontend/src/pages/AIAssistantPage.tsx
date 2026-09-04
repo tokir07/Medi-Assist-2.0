@@ -96,6 +96,13 @@ export const AIAssistantPage: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [conversations, sending, activeId]);
 
+  // Auto-focus input when sending finishes
+  useEffect(() => {
+    if (!sending) {
+      setTimeout(() => inputRef.current?.focus(), 10);
+    }
+  }, [sending]);
+
   const activeConversation = conversations.find((c) => c.id === activeId) || conversations[0];
 
   const handleCreateNewConversation = async () => {

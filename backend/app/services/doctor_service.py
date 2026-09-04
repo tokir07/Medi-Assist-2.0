@@ -4,14 +4,16 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, or_, and_
+from sqlalchemy import desc, or_, and_, func
 
 from app.database.models import User, Doctor, Patient, UserRole
 from app.models.appointment import Appointment, DoctorHealthMessage
 from app.models.medical_record import MedicalRecord
 from app.models.prescription import Prescription
 from app.models.reminder import PatientReminder
-from app.models.ai_conversation import AIConversation, AISummary
+from app.models.ai_conversation import AIConversation, AIMessage, AISummary
+from app.models.patient_portal import VoiceSession, VoiceMessage
+from app.services.chat_service import ChatService
 from app.schemas.doctor_schema import (
     DoctorDashboardStats,
     DoctorScheduleItem,
@@ -71,6 +73,17 @@ class DoctorService:
             db.refresh(doc)
         return doc
 
+    def _get_patient_name(self, db: Session, patient_id: str) -> str:
+        if not patient_id:
+            return "Patient"
+        pat = db.query(Patient).filter(Patient.id == patient_id).first()
+        if pat and pat.user and pat.user.name and pat.user.name.strip():
+            return pat.user.name.strip()
+        user_direct = db.query(User).filter(User.id == patient_id).first()
+        if user_direct and user_direct.name and user_direct.name.strip():
+            return user_direct.name.strip()
+        return "Patient"
+
     def get_dashboard(self, db: Session, user: User) -> DoctorDashboardResponse:
         doc = self.get_or_create_doctor_profile(db, user)
         today_str = datetime.now().strftime("%Y-%m-%d")
@@ -90,7 +103,6 @@ class DoctorService:
 
         patient_ids = list(set([a.patient_id for a in appointments if a.patient_id]))
         if not patient_ids:
-            # Query all patients as fallback if doctor is newly assigned
             all_pats = db.query(Patient).limit(10).all()
             patient_ids = [p.id for p in all_pats]
 
@@ -112,7 +124,7 @@ class DoctorService:
         schedule_items = []
         for app in todays_apps:
             pat = db.query(Patient).filter(Patient.id == app.patient_id).first()
-            pat_name = pat.user.name if (pat and pat.user) else "Patient"
+            pat_name = self._get_patient_name(db, app.patient_id)
             schedule_items.append(DoctorScheduleItem(
                 appointment_id=app.id,
                 patient_id=app.patient_id,
@@ -128,8 +140,7 @@ class DoctorService:
 
         pending_list = []
         for app in pending_apps[:5]:
-            pat = db.query(Patient).filter(Patient.id == app.patient_id).first()
-            pname = pat.user.name if (pat and pat.user) else "Patient"
+            pname = self._get_patient_name(db, app.patient_id)
             pending_list.append({
                 "id": app.id,
                 "patient_name": pname,
@@ -139,15 +150,13 @@ class DoctorService:
                 "reason": app.notes or app.appointment_type or "Health Consultation",
             })
 
-        # Real message history
         db_messages = db.query(DoctorHealthMessage).filter(
             DoctorHealthMessage.doctor_id == doc.id
         ).order_by(desc(DoctorHealthMessage.created_at)).limit(5).all()
 
         recent_msgs = []
         for msg in db_messages:
-            pat = db.query(Patient).filter(Patient.id == msg.patient_id).first()
-            pname = pat.user.name if (pat and pat.user) else "Patient"
+            pname = self._get_patient_name(db, msg.patient_id)
             recent_msgs.append({
                 "id": msg.id,
                 "patient_name": pname,
@@ -232,44 +241,111 @@ class DoctorService:
         return filtered
 
     def accept_appointment(self, db: Session, user: User, appointment_id: str) -> Dict[str, Any]:
-        app = db.query(Appointment).filter(Appointment.id == appointment_id).first()
-        if app:
-            app.status = "Confirmed"
-            db.commit()
-            db.refresh(app)
+        app = db.query(Appointment).filter(Appointment.id == appointment_id, Appointment.is_deleted == False).first()
+        if not app:
+            raise AppException(status_code=status.HTTP_404_NOT_FOUND, message="Appointment not found")
 
+        doc_rec = self.get_or_create_doctor_profile(db, user)
+        is_authorized = (not app.doctor_id) or (app.doctor_id == doc_rec.id) or app.doctor_id.startswith("doc-") or (user.name and user.name.lower() in app.doctor_name.lower())
+        if not is_authorized:
+            logger.warning(f"[DOCTOR_SERVICE] Access denied: Doctor {doc_rec.id} attempted to accept appointment {app.id} assigned to {app.doctor_id}")
+            raise AppException(status_code=status.HTTP_403_FORBIDDEN, message="You are not authorized to approve appointments assigned to another doctor")
+
+        if app.status.upper() not in ["PENDING"]:
+            logger.warning(f"[DOCTOR_SERVICE] Invalid state transition: Cannot approve appointment {app.id} currently in state '{app.status}'")
+            raise AppException(status_code=status.HTTP_400_BAD_REQUEST, message=f"Cannot approve appointment with current status '{app.status}'")
+
+        conflict = db.query(Appointment).filter(
+            Appointment.doctor_name.ilike(f"%{app.doctor_name.strip()}%"),
+            Appointment.appointment_date == app.appointment_date,
+            Appointment.appointment_time == app.appointment_time,
+            Appointment.status.in_(["Confirmed", "CONFIRMED"]),
+            Appointment.id != app.id,
+            Appointment.is_deleted == False
+        ).first()
+
+        if conflict:
+            logger.warning(f"[DOCTOR_SERVICE] Conflict check failed: Slot {app.appointment_time} on {app.appointment_date} already confirmed for another patient")
+            raise AppException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                message=f"Cannot approve: Time slot ({app.appointment_time} on {app.appointment_date}) has already been confirmed for another patient."
+            )
+
+        app.status = "Confirmed"
+        app.doctor_id = doc_rec.id
+        db.commit()
+        db.refresh(app)
+        logger.info(f"[DOCTOR_SERVICE] Appointment id={app.id} successfully APPROVED -> Confirmed")
+
+        try:
             rem = PatientReminder(
                 patient_id=app.patient_id,
                 title="Appointment Confirmed",
-                description=f"Your appointment with {app.doctor_name} for {app.appointment_date} at {app.appointment_time} has been accepted.",
-                reminder_type="APPOINTMENT",
-                due_date=f"{app.appointment_date} {app.appointment_time}",
-                priority="HIGH"
+                subtitle=f"{app.doctor_name} • {app.appointment_date} at {app.appointment_time}",
+                notes=f"Your appointment request with {app.doctor_name} for {app.appointment_date} at {app.appointment_time} has been approved.",
+                reminder_type="Appointment",
+                time_str=app.appointment_time,
+                date_str=app.appointment_date,
+                recurrence="Once",
+                status="Upcoming",
+                icon_type="calendar",
+                color_theme="blue"
             )
             db.add(rem)
             db.commit()
+        except Exception as e:
+            logger.warning(f"Failed to create patient approval notification: {e}")
 
-        return {"status": "success", "message": "Appointment accepted successfully", "appointment_id": appointment_id}
+        try:
+            ChatService.auto_sync_confirmed_conversations(db, user)
+        except Exception as e:
+            logger.warning(f"Auto-sync chat conversation error: {e}")
+
+        return {"status": "success", "message": "Appointment approved and confirmed successfully", "appointment_id": appointment_id, "appointment_status": "Confirmed"}
 
     def reject_appointment(self, db: Session, user: User, appointment_id: str, payload: DoctorAppointmentRejectRequest) -> Dict[str, Any]:
-        app = db.query(Appointment).filter(Appointment.id == appointment_id).first()
-        if app:
-            app.status = "Rejected"
-            app.cancellation_reason = f"{payload.reason}. {payload.message or ''}"
-            db.commit()
+        app = db.query(Appointment).filter(Appointment.id == appointment_id, Appointment.is_deleted == False).first()
+        if not app:
+            raise AppException(status_code=status.HTTP_404_NOT_FOUND, message="Appointment not found")
 
+        doc_rec = self.get_or_create_doctor_profile(db, user)
+        is_authorized = (not app.doctor_id) or (app.doctor_id == doc_rec.id) or app.doctor_id.startswith("doc-") or (user.name and user.name.lower() in app.doctor_name.lower())
+        if not is_authorized:
+            logger.warning(f"[DOCTOR_SERVICE] Access denied: Doctor {doc_rec.id} attempted to decline appointment {app.id} assigned to {app.doctor_id}")
+            raise AppException(status_code=status.HTTP_403_FORBIDDEN, message="You are not authorized to decline appointments assigned to another doctor")
+
+        if app.status.upper() not in ["PENDING"]:
+            logger.warning(f"[DOCTOR_SERVICE] Invalid state transition: Cannot decline appointment {app.id} currently in state '{app.status}'")
+            raise AppException(status_code=status.HTTP_400_BAD_REQUEST, message=f"Cannot decline appointment with current status '{app.status}'")
+
+        decline_reason = payload.reason or "Doctor is unavailable at this time"
+        app.status = "Declined"
+        app.doctor_id = doc_rec.id
+        app.cancellation_reason = f"{decline_reason}. {payload.message or ''}".strip()
+        db.commit()
+        db.refresh(app)
+        logger.info(f"[DOCTOR_SERVICE] Appointment id={app.id} DECLINED (reason: {decline_reason})")
+
+        try:
             rem = PatientReminder(
                 patient_id=app.patient_id,
-                title="Appointment Request Rejected",
-                description=f"Doctor was unable to accept your request for {app.appointment_date} ({payload.reason}). Please select another slot.",
-                reminder_type="APPOINTMENT",
-                due_date=f"{app.appointment_date}",
-                priority="HIGH"
+                title="Appointment Request Declined",
+                subtitle=f"{app.doctor_name} • {decline_reason}",
+                notes=f"Dr. {app.doctor_name} is unavailable for {app.appointment_date} at {app.appointment_time}. Reason: {decline_reason}. Please select another time slot.",
+                reminder_type="Appointment",
+                time_str=app.appointment_time,
+                date_str=app.appointment_date,
+                recurrence="Once",
+                status="Declined",
+                icon_type="calendar",
+                color_theme="rose"
             )
             db.add(rem)
             db.commit()
+        except Exception as e:
+            logger.warning(f"Failed to create patient decline notification: {e}")
 
-        return {"status": "success", "message": "Appointment rejected", "appointment_id": appointment_id}
+        return {"status": "success", "message": "Appointment declined", "appointment_id": appointment_id, "appointment_status": "Declined", "reason": decline_reason}
 
     def mark_no_show(self, db: Session, user: User, appointment_id: str) -> Dict[str, Any]:
         app = db.query(Appointment).filter(Appointment.id == appointment_id).first()
@@ -281,10 +357,11 @@ class DoctorService:
             rem = PatientReminder(
                 patient_id=app.patient_id,
                 title="Missed Appointment (No-Show)",
-                description=f"You missed your scheduled consultation on {app.appointment_date} at {app.appointment_time}. Please book a new slot if needed.",
+                notes=f"You missed your scheduled consultation on {app.appointment_date} at {app.appointment_time}. Please book a new slot if needed.",
                 reminder_type="APPOINTMENT",
-                due_date=app.appointment_date,
-                priority="NORMAL"
+                date_str=app.appointment_date,
+                time_str=app.appointment_time or "09:00 AM",
+                priority="Normal"
             )
             db.add(rem)
             db.commit()
@@ -320,10 +397,11 @@ class DoctorService:
             rem = PatientReminder(
                 patient_id=app.patient_id,
                 title="Emergency Cancellation",
-                description=payload.message_to_patient or f"Your appointment on {app.appointment_date} at {app.appointment_time} was cancelled due to an urgent doctor schedule change.",
+                notes=payload.message_to_patient or f"Your appointment on {app.appointment_date} at {app.appointment_time} was cancelled due to an urgent doctor schedule change.",
                 reminder_type="APPOINTMENT",
-                due_date=f"{app.appointment_date}",
-                priority="URGENT"
+                date_str=f"{app.appointment_date}",
+                time_str=app.appointment_time or "09:00 AM",
+                priority="Urgent"
             )
             db.add(rem)
             db.commit()
@@ -354,10 +432,11 @@ class DoctorService:
                 rem = PatientReminder(
                     patient_id=app.patient_id,
                     title="Appointment Cancelled - Doctor Day Off",
-                    description=f"Your appointment on {payload.date} was cancelled as the doctor is taking leave ({payload.reason}). Please reschedule.",
+                    notes=f"Your appointment on {payload.date} was cancelled as the doctor is taking leave ({payload.reason}). Please reschedule.",
                     reminder_type="APPOINTMENT",
-                    due_date=payload.date,
-                    priority="HIGH"
+                    date_str=payload.date,
+                    time_str=app.appointment_time or "09:00 AM",
+                    priority="High"
                 )
                 db.add(rem)
             db.commit()
@@ -460,20 +539,31 @@ class DoctorService:
             User.is_active == True
         ).all()
 
-        patients_data = []
-        for p in db_patients:
-            active_rx_cnt = db.query(Prescription).filter(
-                Prescription.patient_id == p.id,
+        pat_ids_list = [p.id for p in db_patients]
+        rx_counts = dict(
+            db.query(Prescription.patient_id, func.count(Prescription.id))
+            .filter(
+                Prescription.patient_id.in_(pat_ids_list),
                 Prescription.is_deleted == False,
                 Prescription.status == "ACTIVE"
-            ).count()
+            )
+            .group_by(Prescription.patient_id)
+            .all()
+        )
 
-            last_app = db.query(Appointment).filter(
-                Appointment.patient_id == p.id,
+        latest_apps = {}
+        if pat_ids_list:
+            for app in db.query(Appointment).filter(
+                Appointment.patient_id.in_(pat_ids_list),
                 Appointment.is_deleted == False
-            ).order_by(desc(Appointment.created_at)).first()
+            ).order_by(desc(Appointment.created_at)).all():
+                if app.patient_id not in latest_apps:
+                    latest_apps[app.patient_id] = app.appointment_date
 
-            last_visit_str = last_app.appointment_date if last_app else "Recent Registration"
+        patients_data = []
+        for p in db_patients:
+            active_rx_cnt = rx_counts.get(p.id, 0)
+            last_visit_str = latest_apps.get(p.id, "Recent Registration")
 
             patients_data.append(
                 DoctorPatientSummary(
@@ -508,17 +598,6 @@ class DoctorService:
         if not pat:
             raise AppException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient profile not found.")
 
-        # Verify doctor authorization: does this doctor have an appointment with this patient?
-        if user.role != "ADMIN":
-            has_app = db.query(Appointment).filter(
-                Appointment.patient_id == pat.id,
-                or_(Appointment.doctor_id == doc.id, Appointment.doctor_name.ilike(f"%{user.name}%")),
-                Appointment.is_deleted == False
-            ).first()
-            if not has_app:
-                # If no appointment exists yet, allow viewing basic info or raise authorization check
-                pass
-
         # Real Active Medications
         rx_list = db.query(Prescription).filter(
             Prescription.patient_id == pat.id,
@@ -533,37 +612,136 @@ class DoctorService:
         if not current_meds and pat.current_medications:
             current_meds = [pat.current_medications]
 
-        # Real Medical Records & Reports
+        history_data = []
+
+        # 1. Real Medical Records & Reports + Dynamic Extracted Parameters
         records = db.query(MedicalRecord).filter(
             MedicalRecord.patient_id == pat.id,
             MedicalRecord.is_deleted == False
         ).order_by(desc(MedicalRecord.created_at)).all()
 
         reports_data = []
-        history_data = []
+        abnormal_parameters_summary = []
 
         for rec in records:
-            file_url = rec.file_path if rec.file_path and rec.file_path.startswith("http") else "https://images.unsplash.com/photo-1579154204601-01588f351e67?auto=format&fit=crop&q=80&w=800"
+            file_url = rec.file_path if (rec.file_path and rec.file_path.startswith("http")) else f"/api/records/{rec.id}/file"
+            
+            # Parse extracted data and parameters
+            extracted_params = []
+            if rec.extracted_data:
+                try:
+                    ext_json = json.loads(rec.extracted_data) if isinstance(rec.extracted_data, str) else rec.extracted_data
+                    if isinstance(ext_json, dict) and "parameters" in ext_json:
+                        extracted_params = ext_json.get("parameters", [])
+                except Exception:
+                    pass
+            
+            # Extract abnormal parameters for consolidated summary
+            for p in extracted_params:
+                if isinstance(p, dict) and p.get("status") in ["HIGH", "ELEVATED", "LOW", "CRITICAL", "ABNORMAL"]:
+                    abnormal_parameters_summary.append(
+                        f"{p.get('display_name', 'Parameter')}: {p.get('value', '')} {p.get('unit', '')} ({p.get('status')})"
+                    )
+
+            rec_date = rec.record_date or (rec.created_at.strftime("%d %b %Y") if rec.created_at else "Recent")
+            rec_iso_date = rec.record_date or (rec.created_at.strftime("%Y-%m-%d") if rec.created_at else "2026-09-04")
+
             reports_data.append({
                 "id": rec.id,
                 "title": rec.title,
                 "category": rec.category or "Medical Document",
-                "date": rec.record_date or (rec.created_at.strftime("%d %b %Y") if rec.created_at else "Recent"),
+                "date": rec_date,
                 "file_name": rec.file_name or f"{rec.title}.pdf",
                 "file_url": file_url,
-                "summary": rec.description or rec.ai_summary or "Medical record document on file."
+                "summary": rec.description or getattr(rec, 'summary_quick', None) or "Medical record document on file.",
+                "summary_detailed": getattr(rec, 'summary_detailed', None),
+                "extracted_parameters": extracted_params,
+                "approval_status": getattr(rec, 'approval_status', 'REVIEW')
             })
 
             history_data.append({
                 "id": f"hist-rec-{rec.id}",
-                "date": rec.record_date or (rec.created_at.strftime("%Y-%m-%d") if rec.created_at else "2026-08-31"),
-                "event_type": "Medical Record",
-                "title": rec.title,
+                "date": rec_iso_date,
+                "event_type": "Medical Report",
+                "title": f"Medical Report: {rec.title}",
                 "doctor_name": rec.doctor_name or "Attending Physician",
-                "description": rec.description or "Document uploaded to patient medical vault."
+                "description": rec.description or getattr(rec, 'summary_quick', None) or "Uploaded to medical vault.",
+                "source_id": rec.id,
+                "category": "Report"
             })
 
-        # Real Appointments
+        # 2. Real AI Conversations History
+        ai_convs = db.query(AIConversation).filter(
+            AIConversation.patient_id == pat.id,
+            AIConversation.is_deleted == False
+        ).order_by(desc(AIConversation.created_at)).all()
+
+        ai_conversations_data = []
+        recent_symptoms_ai = []
+
+        for conv in ai_convs:
+            conv_date = conv.created_at.strftime("%d %b %Y, %I:%M %p") if conv.created_at else "Recent"
+            conv_iso_date = conv.created_at.strftime("%Y-%m-%d") if conv.created_at else "2026-09-04"
+            summary_txt = conv.clinical_summary or conv.summary_preview or "Interactive patient health consultation."
+            
+            if conv.clinical_summary:
+                recent_symptoms_ai.append(conv.clinical_summary)
+
+            ai_conversations_data.append({
+                "id": conv.id,
+                "title": conv.title or "Health Consultation",
+                "date": conv_date,
+                "iso_date": conv_iso_date,
+                "status": conv.status,
+                "consultation_state": conv.consultation_state,
+                "summary": summary_txt,
+                "message_count": len(conv.messages) if hasattr(conv, 'messages') else 0
+            })
+
+            history_data.append({
+                "id": f"hist-ai-{conv.id}",
+                "date": conv_iso_date,
+                "event_type": "AI Consultation",
+                "title": f"AI Consultation: {conv.title or 'Health Chat'}",
+                "doctor_name": "MediAssist AI Assistant",
+                "description": summary_txt,
+                "source_id": conv.id,
+                "category": "AI"
+            })
+
+        # 3. Real Voice Sessions History
+        voice_sessions = db.query(VoiceSession).filter(
+            VoiceSession.patient_id == pat.id
+        ).order_by(desc(VoiceSession.created_at)).all()
+
+        voice_sessions_data = []
+        for vs in voice_sessions:
+            vs_date = vs.created_at.strftime("%d %b %Y, %I:%M %p") if vs.created_at else "Recent"
+            vs_iso_date = vs.created_at.strftime("%Y-%m-%d") if vs.created_at else "2026-09-04"
+            vs_summary = vs.summary or vs.transcript or "Voice health consultation."
+
+            voice_sessions_data.append({
+                "id": vs.id,
+                "date": vs_date,
+                "iso_date": vs_iso_date,
+                "mode": vs.conversation_mode or "Voice Consultation",
+                "status": vs.status.value if hasattr(vs.status, 'value') else str(vs.status),
+                "summary": vs_summary,
+                "transcript_preview": vs.transcript[:180] + "..." if vs.transcript and len(vs.transcript) > 180 else vs.transcript
+            })
+
+            history_data.append({
+                "id": f"hist-voice-{vs.id}",
+                "date": vs_iso_date,
+                "event_type": "Voice Consultation",
+                "title": f"Voice Consultation ({vs.conversation_mode or 'General'})",
+                "doctor_name": "MediAssist Voice Assistant",
+                "description": vs_summary,
+                "source_id": vs.id,
+                "category": "Voice"
+            })
+
+        # 4. Real Appointments History
         db_appointments = db.query(Appointment).filter(
             Appointment.patient_id == pat.id,
             Appointment.is_deleted == False
@@ -583,16 +761,20 @@ class DoctorService:
             history_data.append({
                 "id": f"hist-app-{app.id}",
                 "date": app.appointment_date,
-                "event_type": "Consultation",
-                "title": f"Consultation: {app.appointment_type or 'General Checkup'}",
+                "event_type": "Appointment",
+                "title": f"Appointment: {app.appointment_type or 'General Checkup'}",
                 "doctor_name": app.doctor_name,
-                "description": app.notes or f"Status: {app.status}"
+                "description": app.notes or f"Status: {app.status}",
+                "source_id": app.id,
+                "category": "Appointment"
             })
 
-        # Real Prescriptions list
+        # 5. Real Prescriptions History
         prescriptions_data = []
         for rx in rx_list:
             diag = getattr(rx, 'diagnosis_or_indication', None) or getattr(rx, 'title', None) or "General Consultation"
+            rx_iso_date = rx.prescribed_date or (rx.created_at.strftime("%Y-%m-%d") if rx.created_at else "2026-08-31")
+
             prescriptions_data.append({
                 "id": rx.id,
                 "date": rx.prescribed_date or (rx.created_at.strftime("%d %b %Y") if rx.created_at else ""),
@@ -610,8 +792,19 @@ class DoctorService:
                 ]
             })
 
-        # Sort history timeline chronologically
-        history_data.sort(key=lambda x: x.get("date") or "", reverse=True)
+            history_data.append({
+                "id": f"hist-rx-{rx.id}",
+                "date": rx_iso_date,
+                "event_type": "Prescription",
+                "title": f"Prescription: {diag}",
+                "doctor_name": rx.doctor_name or "Attending Physician",
+                "description": f"Medication: {rx.medication_name} ({rx.dosage}, {rx.frequency})",
+                "source_id": rx.id,
+                "category": "Prescription"
+            })
+
+        # Sort history timeline chronologically (latest first)
+        history_data.sort(key=lambda x: str(x.get("date") or ""), reverse=True)
 
         # Real Emergency Contact
         emergency_contact = None
@@ -621,20 +814,31 @@ class DoctorService:
             except Exception:
                 emergency_contact = {"name": "Emergency Contact", "phone": pat.phone or "N/A"}
 
-        # Real AI Health Summary / Patient Guide
-        ai_conv = db.query(AIConversation).filter(
-            AIConversation.patient_id == pat.id,
-            AIConversation.is_deleted == False
-        ).order_by(desc(AIConversation.created_at)).first()
-
+        # AI Health Summary Preview
         ai_health_summary = None
-        if ai_conv:
+        if ai_convs:
+            latest_conv = ai_convs[0]
             ai_health_summary = {
-                "title": ai_conv.title or "AI Preventive Care & Health Summary",
-                "summary": ai_conv.clinical_summary or ai_conv.summary_preview or "Patient has interactive AI consultation records on file.",
+                "title": latest_conv.title or "AI Preventive Care & Health Summary",
+                "summary": latest_conv.clinical_summary or latest_conv.summary_preview or "Patient has active AI consultation records on file.",
                 "disclaimer": "AI-Generated Health Summary — Generated by MediAssist AI. This information is AI-generated and should be reviewed by a qualified healthcare professional.",
-                "created_at": ai_conv.created_at.strftime("%d %b %Y") if ai_conv.created_at else ""
+                "created_at": latest_conv.created_at.strftime("%d %b %Y") if latest_conv.created_at else ""
             }
+
+        # Consolidated Multi-Source Medical Summary
+        recent_concerns_str = "; ".join(recent_symptoms_ai[:3]) if recent_symptoms_ai else "Patient reported symptoms via digital health assistant."
+        abnormal_reports_str = "; ".join(abnormal_parameters_summary[:4]) if abnormal_parameters_summary else "All detected parameters within reference ranges."
+
+        consolidated_summary = {
+            "title": "Executive Consolidated Pre-Consultation Summary",
+            "summary": f"Patient ({pat.user.name if pat.user else 'Patient'}, {pat.gender or 'Male'}) has {len(records)} medical reports, {len(ai_convs)} AI consultations, {len(voice_sessions)} voice sessions, and {len(rx_list)} prescriptions on record. {recent_concerns_str}",
+            "recent_concerns": recent_concerns_str,
+            "key_report_findings": abnormal_reports_str,
+            "active_medications": ", ".join(current_meds) if current_meds else "None recorded",
+            "generated_at": datetime.now().strftime("%d %b %Y, %I:%M %p"),
+            "version": 1,
+            "disclaimer": "Synthesized Clinical Summary — Generated by MediAssist Multi-Source AI. For doctor review."
+        }
 
         patient_summary = DoctorPatientSummary(
             id=pat.id,
@@ -657,9 +861,117 @@ class DoctorService:
             reports=reports_data,
             prescriptions=prescriptions_data,
             appointments=appointments_data,
+            ai_conversations=ai_conversations_data,
+            voice_sessions=voice_sessions_data,
             emergency_contact=emergency_contact,
-            ai_health_summary=ai_health_summary
+            ai_health_summary=ai_health_summary,
+            consolidated_summary=consolidated_summary
         )
+
+    def get_patient_ai_conversation_transcript(self, db: Session, user: User, patient_id: str, conversation_id: str) -> Dict[str, Any]:
+        conv = db.query(AIConversation).filter(
+            AIConversation.id == conversation_id,
+            AIConversation.is_deleted == False
+        ).first()
+
+        if not conv:
+            raise AppException(status_code=status.HTTP_404_NOT_FOUND, detail="AI Conversation not found.")
+
+        messages_data = []
+        for msg in conv.messages:
+            messages_data.append({
+                "id": msg.id,
+                "sender_role": msg.sender_role,
+                "content": msg.content,
+                "message_type": msg.message_type,
+                "created_at": msg.created_at.strftime("%I:%M %p, %d %b %Y") if msg.created_at else ""
+            })
+
+        return {
+            "conversation_id": conv.id,
+            "patient_id": conv.patient_id,
+            "title": conv.title,
+            "status": conv.status,
+            "consultation_state": conv.consultation_state,
+            "clinical_summary": conv.clinical_summary or conv.summary_preview,
+            "created_at": conv.created_at.strftime("%d %b %Y, %I:%M %p") if conv.created_at else "",
+            "messages": messages_data
+        }
+
+    def get_patient_voice_transcript(self, db: Session, user: User, patient_id: str, session_id: str) -> Dict[str, Any]:
+        vs = db.query(VoiceSession).filter(VoiceSession.id == session_id).first()
+
+        if not vs:
+            raise AppException(status_code=status.HTTP_404_NOT_FOUND, detail="Voice session not found.")
+
+        messages_data = []
+        for msg in vs.messages:
+            messages_data.append({
+                "id": msg.id,
+                "role": msg.role,
+                "content": msg.content,
+                "created_at": msg.created_at.strftime("%I:%M %p") if msg.created_at else ""
+            })
+
+        return {
+            "session_id": vs.id,
+            "patient_id": vs.patient_id,
+            "mode": vs.conversation_mode,
+            "status": vs.status.value if hasattr(vs.status, 'value') else str(vs.status),
+            "summary": vs.summary,
+            "transcript": vs.transcript,
+            "key_points": vs.key_points,
+            "started_at": vs.started_at.strftime("%d %b %Y, %I:%M %p") if vs.started_at else "",
+            "messages": messages_data
+        }
+
+    def generate_patient_medical_summary(self, db: Session, user: User, patient_id: str) -> Dict[str, Any]:
+        pat = db.query(Patient).join(User).filter(
+            or_(Patient.id == patient_id, Patient.user_id == patient_id)
+        ).first()
+
+        if not pat:
+            raise AppException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient profile not found.")
+
+        records = db.query(MedicalRecord).filter(MedicalRecord.patient_id == pat.id, MedicalRecord.is_deleted == False).all()
+        ai_convs = db.query(AIConversation).filter(AIConversation.patient_id == pat.id, AIConversation.is_deleted == False).all()
+        voice_sessions = db.query(VoiceSession).filter(VoiceSession.patient_id == pat.id).all()
+        rx_list = db.query(Prescription).filter(Prescription.patient_id == pat.id, Prescription.is_deleted == False).all()
+
+        current_meds = [r.medication_name for r in rx_list if r.status == "ACTIVE"]
+        recent_symptoms = [c.clinical_summary for c in ai_convs if c.clinical_summary]
+        abnormal_params = []
+
+        for rec in records:
+            if rec.extracted_data:
+                try:
+                    ext_json = json.loads(rec.extracted_data) if isinstance(rec.extracted_data, str) else rec.extracted_data
+                    for p in ext_json.get("parameters", []):
+                        if isinstance(p, dict) and p.get("status") in ["HIGH", "ELEVATED", "LOW", "CRITICAL", "ABNORMAL"]:
+                            abnormal_params.append(f"{p.get('display_name')}: {p.get('value')} {p.get('unit', '')} ({p.get('status')})")
+                except Exception:
+                    pass
+
+        summary_text = (
+            f"Comprehensive Clinical Assessment for {pat.user.name if pat.user else 'Patient'} ({pat.gender or 'Male'}): "
+            f"Synthesized from {len(records)} lab reports, {len(ai_convs)} AI assistant consultations, "
+            f"{len(voice_sessions)} voice intake sessions, and {len(rx_list)} prescriptions on file. "
+            f"Primary reported concerns: {'; '.join(recent_symptoms[:2]) if recent_symptoms else 'Routine consultation'}. "
+            f"Report findings highlight: {'; '.join(abnormal_params[:3]) if abnormal_params else 'No critical parameter flags'}. "
+            f"Active medications: {', '.join(current_meds) if current_meds else 'None on file'}. "
+            "Doctor review and clinical correlation recommended."
+        )
+
+        return {
+            "title": "Executive Consolidated Pre-Consultation Summary",
+            "summary": summary_text,
+            "recent_concerns": "; ".join(recent_symptoms[:3]) if recent_symptoms else "None recorded",
+            "key_report_findings": "; ".join(abnormal_params[:4]) if abnormal_params else "All detected parameters within reference ranges.",
+            "active_medications": ", ".join(current_meds) if current_meds else "None recorded",
+            "generated_at": datetime.now().strftime("%d %b %Y, %I:%M %p"),
+            "version": 2,
+            "disclaimer": "AI-Synthesized Multi-Source Summary — Generated by MediAssist AI for Doctor Review."
+        }
 
     def submit_consultation(self, db: Session, user: User, payload: DoctorConsultationSubmit) -> Dict[str, Any]:
         app = db.query(Appointment).filter(Appointment.id == payload.appointment_id).first()
@@ -674,10 +986,11 @@ class DoctorService:
             rem = PatientReminder(
                 patient_id=payload.patient_id,
                 title="Follow-Up Consultation Recommended",
-                description=f"Doctor recommended a follow-up consultation on {due_str}. Reason: {payload.follow_up_reason or payload.diagnosis}",
+                notes=f"Doctor recommended a follow-up consultation on {due_str}. Reason: {payload.follow_up_reason or payload.diagnosis}",
                 reminder_type="FOLLOW_UP",
-                due_date=due_str,
-                priority="HIGH"
+                date_str=due_str,
+                time_str="09:00 AM",
+                priority="High"
             )
             db.add(rem)
 
@@ -724,10 +1037,11 @@ class DoctorService:
         rem = PatientReminder(
             patient_id=payload.patient_id,
             title="New Digital Prescription Received",
-            description=f"Dr. Sarah Jenkins issued a prescription for {payload.diagnosis} ({meds_summary}).",
+            notes=f"Dr. Sarah Jenkins issued a prescription for {payload.diagnosis} ({meds_summary}).",
             reminder_type="MEDICINE",
-            due_date=today_str,
-            priority="HIGH"
+            date_str=today_str,
+            time_str="09:00 AM",
+            priority="High"
         )
         db.add(rem)
         db.commit()
@@ -760,10 +1074,11 @@ class DoctorService:
         rem = PatientReminder(
             patient_id=payload.patient_id,
             title="New Prescription Document Uploaded",
-            description=f"Dr. Sarah Jenkins uploaded your prescription document for {payload.diagnosis}.",
+            notes=f"Dr. Sarah Jenkins uploaded your prescription document for {payload.diagnosis}.",
             reminder_type="MEDICINE",
-            due_date=today_str,
-            priority="HIGH"
+            date_str=today_str,
+            time_str="09:00 AM",
+            priority="High"
         )
         db.add(rem)
         db.commit()
@@ -775,10 +1090,11 @@ class DoctorService:
         rem = PatientReminder(
             patient_id=payload.patient_id,
             title=f"Doctor Reminder: {payload.title}",
-            description=payload.message,
+            notes=payload.message,
             reminder_type=payload.reminder_type.upper(),
-            due_date=due_str,
-            priority="HIGH"
+            date_str=due_str,
+            time_str="09:00 AM",
+            priority="High"
         )
         db.add(rem)
         db.commit()

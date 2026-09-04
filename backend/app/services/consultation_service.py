@@ -9,11 +9,14 @@ from app.services.ai_service import clinical_ai_service
 # pyrefly: ignore [missing-import]
 from app.services.cache_service import cache_service 
 from app.utils.exceptions import AppException
-from fastapi import status
+from app.core.logging_config import get_logger
+
+logger = get_logger("CONSULTATION_SERVICE")
 
 class ConsultationService:
     @staticmethod
     def start_consultation(patient_id: str, language: str, db: Session) -> Consultation:
+        logger.info(f"[CONSULTATION_START] Starting pre-consultation for patient_id={patient_id} (language={language})")
         consultation = Consultation(
             patient_id=patient_id,
             status=ConsultationStatus.IN_PROGRESS,
@@ -23,6 +26,7 @@ class ConsultationService:
         db.add(consultation)
         db.commit()
         db.refresh(consultation)
+        logger.info(f"[CONSULTATION_START_SUCCESS] Created consultation_id={consultation.id}")
         return consultation
 
     @staticmethod

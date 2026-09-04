@@ -27,9 +27,10 @@ from app.schemas.prescription import (
 )
 from app.utils.exceptions import AppException
 from fastapi import status, UploadFile
+from app.core.logging_config import get_logger
 import logging
 
-logger = logging.getLogger(__name__)
+logger = get_logger("PRESCRIPTION_SERVICE")
 
 ALLOWED_EXTENSIONS = {'.pdf', '.jpg', '.jpeg', '.png', '.webp'}
 MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024

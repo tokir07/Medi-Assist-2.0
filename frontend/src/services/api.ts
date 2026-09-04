@@ -86,8 +86,6 @@ api.interceptors.response.use(
         localStorage.removeItem('mediassist_token');
         localStorage.removeItem('mediassist_user');
         window.location.href = '/login?expired=true';
-      } else if (status === 403 && currentPath !== '/access-denied') {
-        window.location.href = '/access-denied';
       }
     }
     return Promise.reject(error);

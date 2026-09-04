@@ -1,5 +1,6 @@
 import React from 'react';
 import { Play, ArrowRight } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import type { VoiceHistoryItem } from '../../types/voiceAssistant';
 
 interface VoiceHistoryPanelProps {
@@ -11,6 +12,8 @@ export const VoiceHistoryPanel: React.FC<VoiceHistoryPanelProps> = ({
   history,
   onSelectHistory,
 }) => {
+  const navigate = useNavigate();
+
   return (
     <div className="bg-white rounded-3xl border border-[#D9E1EA]/80 p-5 shadow-[0_4px_20px_rgba(16,42,86,0.04)] space-y-3.5">
       {/* Header */}
@@ -18,7 +21,7 @@ export const VoiceHistoryPanel: React.FC<VoiceHistoryPanelProps> = ({
         <h3 className="text-sm sm:text-base font-bold text-[#102A56]">Voice History</h3>
         <button
           type="button"
-          onClick={() => {}}
+          onClick={() => navigate('/patient/records?tab=voice')}
           className="inline-flex items-center gap-1 text-xs font-semibold text-[#0FA3A3] hover:text-[#0D8E8E] transition-colors cursor-pointer"
         >
           <span>View All</span>

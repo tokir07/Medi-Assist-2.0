@@ -165,7 +165,7 @@ export const DoctorPrescriptionsPage: React.FC = () => {
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2.5">
-            <Pill className="w-6 h-6 text-purple-600" />
+            <Pill className="w-6 h-6 text-teal-600" />
             <span>Prescription Builder & Templates</span>
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 mt-1">
@@ -209,9 +209,9 @@ export const DoctorPrescriptionsPage: React.FC = () => {
                 key={tmpl.id}
                 type="button"
                 onClick={() => handleApplyTemplate(tmpl)}
-                className="px-3.5 py-1.5 rounded-xl bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-800 text-xs font-bold transition-all cursor-pointer shadow-2xs flex items-center gap-1.5"
+                className="px-3.5 py-1.5 rounded-xl bg-teal-50 hover:bg-teal-100 border border-teal-200 text-teal-800 text-xs font-bold transition-all cursor-pointer shadow-2xs flex items-center gap-1.5"
               >
-                <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+                <Pill className="w-3.5 h-3.5 text-teal-600" />
                 <span>{tmpl.title}</span>
               </button>
             ))}

@@ -24,6 +24,13 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     }
   }, [inputText]);
 
+  // Auto-focus textarea when loading completes
+  useEffect(() => {
+    if (!loading) {
+      setTimeout(() => textareaRef.current?.focus(), 10);
+    }
+  }, [loading]);
+
   const handleSend = () => {
     const trimmed = inputText.trim();
     if (!trimmed || loading) return;
@@ -31,6 +38,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     setInputText('');
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
+      textareaRef.current.focus();
     }
   };
 

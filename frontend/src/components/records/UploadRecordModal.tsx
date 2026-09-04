@@ -37,7 +37,7 @@ export const UploadRecordModal: React.FC<UploadRecordModalProps> = ({
   onSuccess,
   existingSessions = ['Annual Health Checkup', 'Dr. Sharma Consultation', 'Hospital Visit']
 }) => {
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('Lab Report');
   const [sessionName, setSessionName] = useState(existingSessions[0] || 'General Records');
@@ -71,42 +71,56 @@ export const UploadRecordModal: React.FC<UploadRecordModalProps> = ({
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      validateAndSetFile(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      validateAndAddFiles(Array.from(e.dataTransfer.files));
     }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      validateAndSetFile(e.target.files[0]);
+    if (e.target.files && e.target.files.length > 0) {
+      validateAndAddFiles(Array.from(e.target.files));
     }
   };
 
-  const validateAndSetFile = (selectedFile: File) => {
+  const validateAndAddFiles = (incomingFiles: File[]) => {
     setError(null);
-    const validExtensions = ['.pdf', '.jpg', '.jpeg', '.png', '.dicom', '.dcm'];
-    const ext = selectedFile.name.substring(selectedFile.name.lastIndexOf('.')).toLowerCase();
+    const validExtensions = ['.pdf', '.jpg', '.jpeg', '.png', '.dicom', '.dcm', '.webp'];
+    const valid: File[] = [];
 
-    if (!validExtensions.includes(ext)) {
-      setError(`Only PDF and image files (${validExtensions.join(', ')}) are supported.`);
-      return;
+    for (const f of incomingFiles) {
+      const ext = f.name.substring(f.name.lastIndexOf('.')).toLowerCase();
+      if (!validExtensions.includes(ext)) {
+        setError(`File '${f.name}' has unsupported extension. Allowed: ${validExtensions.join(', ')}`);
+        return;
+      }
+      if (f.size > 25 * 1024 * 1024) {
+        setError(`File '${f.name}' exceeds maximum allowed size of 25MB.`);
+        return;
+      }
+      valid.push(f);
     }
 
-    if (selectedFile.size > 25 * 1024 * 1024) {
-      setError('File exceeds maximum size of 25MB.');
-      return;
-    }
+    setFiles((prev) => {
+      const combined = [...prev, ...valid];
+      if (!title && combined.length === 1) {
+        const cleanName = combined[0].name.replace(/\.[^/.]+$/, "").replace(/[_-]/g, " ");
+        setTitle(cleanName);
+      }
+      return combined;
+    });
+  };
 
-    setFile(selectedFile);
-    if (!title) {
-      const cleanName = selectedFile.name.replace(/\.[^/.]+$/, "").replace(/[_-]/g, " ");
-      setTitle(cleanName);
-    }
+  const removeFile = (index: number) => {
+    setFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim()) {
+    if (files.length === 0) {
+      setError('Please select or drop at least one file.');
+      return;
+    }
+    if (files.length === 1 && !title.trim()) {
       setError('Please provide a document title.');
       return;
     }
@@ -118,7 +132,6 @@ export const UploadRecordModal: React.FC<UploadRecordModalProps> = ({
       setError(null);
 
       const formData = new FormData();
-      formData.append('title', title.trim());
       formData.append('category', category);
       formData.append('session_name', finalSession);
       if (doctorName.trim()) formData.append('doctor_name', doctorName.trim());
@@ -126,17 +139,29 @@ export const UploadRecordModal: React.FC<UploadRecordModalProps> = ({
       if (recordDate.trim()) formData.append('record_date', recordDate.trim());
       if (tags.trim()) formData.append('tags', tags.trim());
       if (description.trim()) formData.append('description', description.trim());
-      if (file) formData.append('file', file);
 
-      const newRecord = await recordsService.uploadRecord(formData, (progress) => {
-        setUploadProgress(progress);
-      });
+      if (files.length === 1) {
+        formData.append('title', title.trim() || files[0].name);
+        formData.append('file', files[0]);
 
-      onSuccess(newRecord);
+        const newRecord = await recordsService.uploadRecord(formData, (progress) => {
+          setUploadProgress(progress);
+        });
+        onSuccess(newRecord);
+      } else {
+        files.forEach((f) => formData.append('files', f));
+        const uploadedRecords = await recordsService.uploadMultipleRecords(formData, (progress) => {
+          setUploadProgress(progress);
+        });
+        if (uploadedRecords && uploadedRecords.length > 0) {
+          onSuccess(uploadedRecords[0]);
+        }
+      }
+
       onClose();
     } catch (err: any) {
       console.error('Upload failed:', err);
-      setError(err?.response?.data?.message || 'Failed to upload document. Please try again.');
+      setError(err?.response?.data?.message || 'Failed to upload document(s). Please try again.');
     } finally {
       setIsUploading(false);
       setUploadProgress(0);
@@ -183,7 +208,7 @@ export const UploadRecordModal: React.FC<UploadRecordModalProps> = ({
             className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all duration-200 ${
               isDragging
                 ? 'border-teal-500 bg-teal-50/60 scale-[0.99]'
-                : file
+                : files.length > 0
                 ? 'border-teal-400 bg-teal-50/20'
                 : 'border-slate-300 hover:border-teal-400 hover:bg-slate-50/50'
             }`}
@@ -192,19 +217,38 @@ export const UploadRecordModal: React.FC<UploadRecordModalProps> = ({
               type="file"
               ref={fileInputRef}
               onChange={handleFileChange}
-              accept=".pdf,.jpg,.jpeg,.png,.dicom,.dcm"
+              accept=".pdf,.jpg,.jpeg,.png,.dicom,.dcm,.webp"
+              multiple
               className="hidden"
             />
-            {file ? (
-              <div className="flex items-center justify-center gap-3">
-                <div className="w-12 h-12 rounded-xl bg-teal-100 text-teal-700 flex items-center justify-center font-bold text-xs uppercase">
-                  {file.name.split('.').pop()}
+            {files.length > 0 ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs font-bold text-slate-700 mb-1">
+                  <span>Selected Reports ({files.length})</span>
+                  <span className="text-teal-600 font-semibold hover:underline">+ Add more files</span>
                 </div>
-                <div className="text-left">
-                  <p className="text-sm font-semibold text-slate-800 line-clamp-1">{file.name}</p>
-                  <p className="text-xs text-slate-500">{(file.size / (1024 * 1024)).toFixed(2)} MB • Ready for AI extraction</p>
+                <div className="max-h-36 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-xl bg-white p-2 text-left">
+                  {files.map((f, idx) => (
+                    <div key={idx} className="flex items-center justify-between py-1.5 px-2">
+                      <div className="flex items-center gap-2.5 truncate">
+                        <div className="w-7 h-7 rounded-lg bg-teal-100 text-teal-700 flex items-center justify-center font-bold text-[10px] uppercase shrink-0">
+                          {f.name.split('.').pop()}
+                        </div>
+                        <div className="truncate">
+                          <p className="text-xs font-semibold text-slate-800 truncate">{f.name}</p>
+                          <p className="text-[10px] text-slate-400">{(f.size / (1024 * 1024)).toFixed(2)} MB</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); removeFile(idx); }}
+                        className="p-1 text-slate-400 hover:text-rose-600 transition"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
                 </div>
-                <CheckCircle2 className="w-5 h-5 text-teal-600 ml-auto" />
               </div>
             ) : (
               <div className="space-y-2">
@@ -212,9 +256,9 @@ export const UploadRecordModal: React.FC<UploadRecordModalProps> = ({
                   <UploadCloud className="w-6 h-6" />
                 </div>
                 <p className="text-sm font-semibold text-slate-800">
-                  Drag & drop medical report or <span className="text-teal-600 hover:underline">browse</span>
+                  Drag & drop medical report(s) or <span className="text-teal-600 hover:underline">browse</span>
                 </p>
-                <p className="text-xs text-slate-400">Supported formats: PDF, JPG, PNG, DICOM (PDF recommended)</p>
+                <p className="text-xs text-slate-400">Supported formats: PDF, JPG, PNG, WEBP, DICOM (Select single or multiple reports)</p>
               </div>
             )}
           </div>

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, status, UploadFile, File, Form, Request
 from sqlalchemy.orm import Session
 from app.database.database import get_db
 from app.database.models import Patient
-from app.models.patient_portal import Consultation, VoiceSession, VoiceSessionStatus
+from app.models.patient_portal import Consultation, VoiceSession, VoiceMessage, VoiceSessionStatus
 from app.core.dependencies import get_current_patient
 from app.core.config import settings
 from app.schemas.voice import VoiceSessionResponse, TranscribeRequest, TranscribeResponse
@@ -252,10 +252,28 @@ async def transcribe_voice_audio(
             ended_at=datetime.now(timezone.utc)
         )
         db.add(session)
+        db.commit()
+        db.refresh(session)
     else:
-        session.transcript = transcript_text
+        session.transcript = (session.transcript + "\n" + transcript_text) if session.transcript else transcript_text
         session.status = VoiceSessionStatus.COMPLETED
         session.ended_at = datetime.now(timezone.utc)
+
+    # Save VoiceMessage
+    last_vmsg = db.query(VoiceMessage).filter(
+        VoiceMessage.voice_session_id == session.id
+    ).order_by(VoiceMessage.sequence_number.desc()).first()
+    seq_user = (last_vmsg.sequence_number + 1) if last_vmsg else 1
+
+    vmsg = VoiceMessage(
+        voice_session_id=session.id,
+        role="user",
+        content=transcript_text,
+        sequence_number=seq_user,
+        message_type="voice_transcription",
+        timestamp=datetime.now(timezone.utc)
+    )
+    db.add(vmsg)
 
     db.commit()
     db.refresh(session)

@@ -30,9 +30,10 @@ from app.schemas.record import (
 from app.services.document_processor import document_processor
 from app.services.parameter_dictionary import lookup_parameter, categorize_parameter
 from app.utils.exceptions import AppException
+from app.core.logging_config import get_logger
 from fastapi import status, UploadFile
 
-logger = logging.getLogger("mediassist.record_service")
+logger = get_logger("RECORD_SERVICE")
 
 ALLOWED_EXTENSIONS = {'.pdf', '.jpg', '.jpeg', '.png', '.dicom', '.dcm', '.webp'}
 MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024  # 25MB
@@ -460,10 +461,13 @@ class RecordService:
         extracted_data_json = None
         extraction_status = "PENDING"
 
+        logger.info(f"[STEP 1/4] Initiating record upload (patient_id={patient_id}, title='{title}', category='{category}')")
+
         if file and file.filename:
             file_name = file.filename
             ext = os.path.splitext(file.filename)[1].lower()
             if ext not in ALLOWED_EXTENSIONS:
+                logger.error(f"[ERROR] Unsupported file format '{ext}' for file '{file.filename}'")
                 raise AppException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     message=f"Unsupported file format '{ext}'. Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
@@ -483,6 +487,7 @@ class RecordService:
             content = await file.read()
             file_size = len(content)
             if file_size > MAX_FILE_SIZE_BYTES:
+                logger.error(f"[ERROR] File '{file.filename}' size ({format_file_size(file_size)}) exceeds limit")
                 raise AppException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     message=f"File exceeds maximum allowed size of 25MB (File size: {format_file_size(file_size)})"
@@ -496,16 +501,19 @@ class RecordService:
             with open(full_path, "wb") as f:
                 f.write(content)
             file_path = full_path
+            logger.info(f"[STEP 2/4] File saved successfully at '{full_path}' ({format_file_size(file_size)})")
 
-            # Dynamic PDF Parameter Extraction
-            if file_type == "PDF":
+            # Dynamic Text & OCR Extraction for PDFs and Images
+            if full_path:
                 try:
-                    extracted_text = document_processor.extract_text_from_pdf(full_path)
+                    logger.info(f"[STEP 3/4] Extracting text & parsing parameters for '{file.filename}'...")
+                    extracted_text = document_processor.extract_document_text(full_path, file_type)
                     parsed = document_processor.parse_structured_data(extracted_text, file.filename)
                     extracted_data_json = json.dumps(parsed)
                     extraction_status = "COMPLETED"
+                    logger.info(f"[STEP 3/4 SUCCESS] Extracted {len(extracted_text or '')} chars and {len(parsed.get('parameters', []))} parameters")
                 except Exception as e:
-                    logger.warning(f"Immediate extraction fallback: {e}")
+                    logger.warning(f"[STEP 3/4 WARNING] Extraction fallback: {e}")
                     extraction_status = "FAILED"
 
         # Parse tags
@@ -587,10 +595,52 @@ class RecordService:
         return RecordService._to_response(new_record)
 
     @staticmethod
+    async def create_multiple_uploaded_records(
+        patient_id: str,
+        files: List[UploadFile],
+        titles: Optional[List[str]],
+        category: str,
+        doctor_name: Optional[str],
+        hospital: Optional[str],
+        record_date: Optional[str],
+        session_name: Optional[str],
+        tags: Optional[str],
+        description: Optional[str],
+        db: Session
+    ) -> List[MedicalRecordResponse]:
+        results = []
+        for idx, file in enumerate(files):
+            file_title = None
+            if titles and idx < len(titles) and titles[idx] and titles[idx].strip():
+                file_title = titles[idx].strip()
+            else:
+                base = os.path.splitext(file.filename or f"Report_{idx+1}")[0]
+                file_title = base.replace('_', ' ').replace('-', ' ').title()
+
+            try:
+                res = await RecordService.create_uploaded_record(
+                    patient_id=patient_id,
+                    file=file,
+                    title=file_title,
+                    category=category,
+                    doctor_name=doctor_name,
+                    hospital=hospital,
+                    record_date=record_date,
+                    session_name=session_name,
+                    tags=tags,
+                    description=description,
+                    db=db
+                )
+                results.append(res)
+            except Exception as e:
+                logger.error(f"Batch upload failed for file {file.filename}: {e}")
+        return results
+
+    @staticmethod
     def extract_record_data(record_id: str, patient_id: str, db: Session) -> MedicalRecordResponse:
         rec = RecordService.get_record_by_id(record_id, patient_id, db)
-        if rec.file_path and os.path.exists(rec.file_path) and rec.file_type == "PDF":
-            rec.extracted_text = document_processor.extract_text_from_pdf(rec.file_path)
+        if rec.file_path and os.path.exists(rec.file_path):
+            rec.extracted_text = document_processor.extract_document_text(rec.file_path, rec.file_type)
             parsed = document_processor.parse_structured_data(rec.extracted_text, rec.file_name or "")
             rec.extracted_data = json.dumps(parsed)
             rec.extraction_status = "COMPLETED"
@@ -627,6 +677,65 @@ class RecordService:
             logger.warning(f"Automatic prescription sync on extract failed: {e}")
 
         return RecordService._to_response(rec)
+
+    @staticmethod
+    def retry_record_processing(record_id: str, patient_id: str, db: Session) -> MedicalRecordResponse:
+        rec = RecordService.get_record_by_id(record_id, patient_id, db)
+        rec.extraction_status = "EXTRACTING"
+        rec.summary_status = "GENERATING"
+        db.commit()
+
+        try:
+            if rec.file_path and os.path.exists(rec.file_path):
+                rec.extracted_text = document_processor.extract_document_text(rec.file_path, rec.file_type)
+            
+            raw_input = rec.extracted_text or f"{rec.title}\n{rec.description or ''}\nDoctor: {rec.doctor_name}\nHospital: {rec.hospital}"
+            parsed = document_processor.parse_structured_data(raw_input, rec.file_name or "")
+            rec.extracted_data = json.dumps(parsed)
+            rec.extraction_status = "COMPLETED"
+
+            summary_res = document_processor.generate_document_summary(
+                raw_text=rec.extracted_text or raw_input,
+                extracted_data=parsed,
+                title=rec.title,
+                category=rec.category
+            )
+            rec.summary_quick = summary_res.get("quick_summary")
+            rec.summary_detailed = summary_res.get("detailed_summary")
+            rec.summary_structured = json.dumps(summary_res.get("structured_summary", {}))
+            rec.summary_status = "GENERATED"
+            rec.summary_version = (rec.summary_version or 1) + 1
+            rec.summary_generated_at = datetime.now(timezone.utc)
+        except Exception as e:
+            logger.error(f"Retry processing failed for record {record_id}: {e}")
+            rec.extraction_status = "FAILED"
+            rec.summary_status = "FAILED"
+
+        db.commit()
+        db.refresh(rec)
+        return RecordService._to_response(rec)
+
+    @staticmethod
+    def backfill_unprocessed_records(patient_id: str, db: Session) -> Dict[str, Any]:
+        unprocessed = db.query(MedicalRecord).filter(
+            MedicalRecord.patient_id == patient_id,
+            MedicalRecord.is_deleted == False,
+            or_(
+                MedicalRecord.extracted_text == None,
+                MedicalRecord.extraction_status == "PENDING",
+                MedicalRecord.extraction_status == "FAILED"
+            )
+        ).all()
+
+        reprocessed_ids = []
+        for rec in unprocessed:
+            try:
+                RecordService.retry_record_processing(rec.id, patient_id, db)
+                reprocessed_ids.append(rec.id)
+            except Exception as e:
+                logger.warning(f"Backfill failed for record {rec.id}: {e}")
+
+        return {"reprocessed_count": len(reprocessed_ids), "reprocessed_record_ids": reprocessed_ids}
 
     @staticmethod
     def edit_extraction(
@@ -701,6 +810,16 @@ class RecordService:
                 "summary_version": rec.summary_version or 1,
                 "summary_generated_at": rec.summary_generated_at.isoformat() if rec.summary_generated_at else datetime.now(timezone.utc).isoformat()
             }
+
+        # Ensure document text and parameters are extracted if missing or on force_regenerate
+        if (force_regenerate or not rec.extracted_text or not rec.extracted_data) and rec.file_path and os.path.exists(rec.file_path):
+            try:
+                rec.extracted_text = document_processor.extract_document_text(rec.file_path, rec.file_type)
+                parsed = document_processor.parse_structured_data(rec.extracted_text, rec.file_name or "")
+                rec.extracted_data = json.dumps(parsed)
+                rec.extraction_status = "COMPLETED"
+            except Exception as e:
+                logger.warning(f"Text extraction during summary generation failed: {e}")
 
         ext_data = {}
         if rec.extracted_data:

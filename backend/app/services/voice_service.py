@@ -9,7 +9,9 @@ from app.core.config import settings
 from app.utils.exceptions import AppException
 from fastapi import status
 
-logger = logging.getLogger("mediassist.voice")
+from app.core.logging_config import get_logger
+
+logger = get_logger("VOICE_SERVICE")
 
 class BaseSpeechToTextService(ABC):
     @abstractmethod
@@ -21,6 +23,7 @@ class MockSpeechToTextService(BaseSpeechToTextService):
     Mock STT service for isolated automated test runs ONLY.
     """
     def transcribe(self, audio_bytes: bytes, filename: str = "audio.m4a", language: str = "en") -> Dict[str, Any]:
+        logger.info(f"[VOICE_STT_MOCK] Transcribing mock audio file '{filename}' (size={len(audio_bytes)} bytes)")
         return {
             "transcript": "It started yesterday evening and feels mostly in the front of my head.",
             "confidence": 0.96,
@@ -31,10 +34,11 @@ class MockSpeechToTextService(BaseSpeechToTextService):
 class OpenAISpeechToTextService(BaseSpeechToTextService):
     def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None, model: Optional[str] = None):
         self.api_key = api_key or settings.OPENAI_API_KEY
-        self.base_url = base_url or (settings.STT_BASE_URL if settings.STT_BASE_URL else None)
+        self.base_url = base_url or settings.OPENAI_BASE_URL
         self.model = model or settings.STT_MODEL or "whisper-1"
 
     def transcribe(self, audio_bytes: bytes, filename: str = "audio.m4a", language: str = "en") -> Dict[str, Any]:
+        logger.info(f"[VOICE_STT] Starting audio transcription for '{filename}' (size={len(audio_bytes)} bytes, lang={language})")
         if not self.api_key:
             logger.error("STT provider configuration error: OPENAI_API_KEY is not configured")
             raise AppException(

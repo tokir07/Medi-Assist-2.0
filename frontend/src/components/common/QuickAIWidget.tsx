@@ -90,6 +90,13 @@ export const QuickAIWidget: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen]);
 
+  // Auto-focus input when AI response finishes
+  useEffect(() => {
+    if (!loading && isOpen) {
+      setTimeout(() => inputRef.current?.focus(), 10);
+    }
+  }, [loading, isOpen]);
+
   const handleSendMessage = async (textToSend?: string) => {
     const query = (textToSend || inputValue).trim();
     if (!query || loading) return;

@@ -32,7 +32,9 @@ from app.schemas.appointment import (
 from app.utils.exceptions import AppException
 from fastapi import status
 
-logger = logging.getLogger(__name__)
+from app.core.logging_config import get_logger
+
+logger = get_logger("APPOINTMENT_SERVICE")
 
 STANDARD_SLOTS = [
     "09:00 AM", "09:30 AM", "10:00 AM", "10:30 AM", "11:00 AM", "11:30 AM",
@@ -497,19 +499,20 @@ class AppointmentService:
         payload: AppointmentCreate,
         db: Session
     ) -> AppointmentResponse:
-        # 1. Double-Booking Protection: Server-Side Validation
-        existing = db.query(Appointment).filter(
+        # 1. Double-Booking Protection: Ensure slot is not ALREADY Confirmed for another patient
+        existing_confirmed = db.query(Appointment).filter(
             Appointment.doctor_name.ilike(f"%{payload.doctor_name.strip()}%"),
             Appointment.appointment_date == payload.appointment_date,
             Appointment.appointment_time == payload.appointment_time,
-            Appointment.status.in_(["Confirmed", "Pending", "Rescheduled"]),
+            Appointment.status.in_(["Confirmed", "CONFIRMED"]),
             Appointment.is_deleted == False
         ).first()
 
-        if existing:
+        if existing_confirmed:
+            logger.warning(f"[APPOINTMENT_SERVICE] Slot conflict: Doctor '{payload.doctor_name}' is already confirmed for {payload.appointment_date} at {payload.appointment_time}")
             raise AppException(
                 status_code=status.HTTP_409_CONFLICT,
-                message=f"This appointment slot ({payload.appointment_time} on {payload.appointment_date}) is no longer available. Please select another time."
+                message=f"This appointment slot ({payload.appointment_time} on {payload.appointment_date}) has already been confirmed. Please select another available time."
             )
 
         # Resolve doctor_id if missing from Doctor profile lookup
@@ -519,7 +522,7 @@ class AppointmentService:
             if doc_rec:
                 doc_id = doc_rec.id
 
-        # 2. Create Appointment
+        # 2. Create Appointment Request with PENDING status
         new_apt = Appointment(
             patient_id=patient_id,
             doctor_id=doc_id,
@@ -534,7 +537,7 @@ class AppointmentService:
             duration_minutes=payload.duration_minutes or 30,
             mode=payload.mode or "In-Person",
             session_name=payload.session_name or "General Consultation",
-            status="Confirmed",
+            status="Pending",
             notes=payload.notes,
             preparation_instructions=payload.preparation_instructions or "Please arrive 15 minutes before your scheduled appointment with your photo ID.",
             is_deleted=False
@@ -543,25 +546,26 @@ class AppointmentService:
         db.add(new_apt)
         db.commit()
         db.refresh(new_apt)
+        logger.info(f"[APPOINTMENT_SERVICE] Appointment request created (id={new_apt.id}, status=Pending, doctor={new_apt.doctor_name})")
 
-        # 3. Create an automatic appointment reminder in PatientReminder
+        # 3. Create appointment notification entry for patient reminder
         try:
             rem = PatientReminder(
                 patient_id=patient_id,
                 reminder_type="Appointment",
-                title=f"Appointment with {new_apt.doctor_name}",
-                subtitle=f"{new_apt.hospital} • {new_apt.appointment_type}",
+                title=f"Appointment Requested with {new_apt.doctor_name}",
+                subtitle=f"{new_apt.hospital} • Pending Doctor Approval",
                 time_str=new_apt.appointment_time,
                 date_str=new_apt.appointment_date,
                 recurrence="Once",
-                status="Upcoming",
+                status="Pending",
                 icon_type="calendar",
-                color_theme="blue"
+                color_theme="amber"
             )
             db.add(rem)
             db.commit()
         except Exception as e:
-            logger.warning(f"Failed to auto-create appointment reminder: {e}")
+            logger.warning(f"Failed to auto-create appointment notification: {e}")
 
         return AppointmentService._to_response(new_apt, db)
 

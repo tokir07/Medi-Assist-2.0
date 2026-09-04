@@ -74,13 +74,39 @@ class VoiceSession(Base):
     __tablename__ = "voice_sessions"
 
     id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
-    consultation_id = Column(String(36), ForeignKey("consultations.id", ondelete="CASCADE"), nullable=False, index=True)
+    consultation_id = Column(String(36), ForeignKey("consultations.id", ondelete="CASCADE"), nullable=True, index=True)
     patient_id = Column(String(36), ForeignKey("patients.id", ondelete="CASCADE"), nullable=False, index=True)
+    ai_conversation_id = Column(String(36), ForeignKey("ai_conversations.id", ondelete="SET NULL"), nullable=True, index=True)
     language = Column(String(10), nullable=False, default="en")
     status = Column(SQLEnum(VoiceSessionStatus), nullable=False, default=VoiceSessionStatus.IDLE)
+    conversation_mode = Column(String(50), nullable=False, default="HEALTH_CONSULTATION")
     transcript = Column(Text, nullable=True)
+    summary = Column(Text, nullable=True)
+    key_points = Column(Text, nullable=True)  # JSON string array
+    extracted_medical_context = Column(Text, nullable=True)  # JSON string
+    safety_flags = Column(Text, nullable=True)  # JSON string
     started_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     ended_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+
+    messages = relationship("VoiceMessage", back_populates="voice_session", cascade="all, delete-orphan", order_by="VoiceMessage.sequence_number")
+
+class VoiceMessage(Base):
+    __tablename__ = "voice_messages"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
+    voice_session_id = Column(String(36), ForeignKey("voice_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = Column(String(20), nullable=False)  # "user", "assistant", "system"
+    content = Column(Text, nullable=False)  # Raw spoken transcript text
+    sequence_number = Column(Integer, nullable=False, default=1)
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    message_type = Column(String(50), nullable=False, default="voice_transcription")  # voice_input, voice_transcription, assistant_response, system_event, summary
+    metadata_json = Column(Text, nullable=True)  # JSON string for intent, latency, etc.
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    voice_session = relationship("VoiceSession", back_populates="messages")
+
 
 class ClinicalHistory(Base):
     __tablename__ = "clinical_histories"

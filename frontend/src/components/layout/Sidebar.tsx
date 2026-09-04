@@ -32,6 +32,7 @@ const patientNavItems: NavItem[] = [
   { name: 'My Records', path: '/patient/records', icon: FileText },
   { name: 'Prescriptions', path: '/patient/prescriptions', icon: Pill },
   { name: 'Appointments', path: '/patient/appointments', icon: Calendar },
+  { name: 'Messages', path: '/patient/messages', icon: MessageSquare },
   { name: 'Health Tips', path: '/patient/tips', icon: Lightbulb },
   { name: 'Reminders', path: '/patient/reminders', icon: Bell },
   { name: 'Profile', path: '/patient/profile', icon: UserIcon },
@@ -119,9 +120,9 @@ export const Sidebar: React.FC<{ isOpen?: boolean; onClose?: () => void }> = ({
                     onClose();
                   }
                 }}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-medium transition-colors ${
+                className={`flex items-center gap-3 px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
                   isActive
-                    ? 'bg-teal-50 text-teal-700 font-semibold border-l-3 border-teal-600 shadow-2xs'
+                    ? 'bg-slate-100 text-slate-900 font-semibold border-l-3 border-teal-700'
                     : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
                 }`}
               >

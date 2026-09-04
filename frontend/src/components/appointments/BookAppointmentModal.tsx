@@ -474,16 +474,19 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({
           {/* STEP 4: Success Screen */}
           {step === 4 && (
             <div className="py-6 text-center space-y-3">
-              <div className="w-14 h-14 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center mx-auto shadow-sm animate-bounce">
-                <CheckCircle2 className="w-8 h-8" />
+              <div className="w-14 h-14 rounded-full bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center mx-auto shadow-sm">
+                <Clock className="w-8 h-8 animate-pulse" />
               </div>
-              <h3 className="text-base font-bold text-slate-900">Appointment Confirmed!</h3>
+              <div className="inline-block px-3 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-full text-xs font-bold">
+                ● Pending Doctor Approval
+              </div>
+              <h3 className="text-base font-bold text-slate-900">Appointment Requested</h3>
               <p className="text-xs text-slate-600 max-w-sm mx-auto">
-                Your appointment with <strong>{selectedDoctor?.name}</strong> on <strong>{selectedDate}</strong> at <strong>{selectedSlot}</strong> has been booked and saved to your records.
+                Your appointment request with <strong>{selectedDoctor?.name}</strong> on <strong>{selectedDate}</strong> at <strong>{selectedSlot}</strong> has been submitted. You will receive a notification once Dr. {selectedDoctor?.name?.split(' ')?.[1] || 'Sharma'} approves the request.
               </p>
               {confirmedAptId && (
                 <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200 inline-block text-xs font-mono font-bold text-slate-700">
-                  Appointment ID: {confirmedAptId.slice(0, 8).toUpperCase()}
+                  Request ID: {confirmedAptId.slice(0, 8).toUpperCase()}
                 </div>
               )}
             </div>

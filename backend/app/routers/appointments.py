@@ -3,8 +3,11 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.database.database import get_db
-from app.database.models import Patient
-from app.core.dependencies import get_current_patient
+from app.database.models import Patient, User
+from app.core.dependencies import get_current_patient, get_current_user
+from app.utils.exceptions import AppException
+from app.schemas.doctor_schema import DoctorAppointmentRejectRequest
+from app.services.doctor_service import doctor_service
 from app.schemas.appointment import (
     AppointmentResponse,
     AppointmentSummaryResponse,
@@ -199,3 +202,33 @@ def cancel_appointment(
     Cancel an existing appointment and deactivate reminders.
     """
     return appointment_service.cancel_appointment(appointment_id, current_patient.id, payload, db)
+
+@router.patch("/{appointment_id}/approve")
+@router.post("/{appointment_id}/approve")
+def approve_appointment(
+    appointment_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Approve a pending appointment request (Doctor only).
+    """
+    if str(getattr(current_user.role, 'value', current_user.role)).upper() not in ["DOCTOR"]:
+        raise AppException(status_code=status.HTTP_403_FORBIDDEN, message="Only doctors are authorized to approve appointment requests")
+    return doctor_service.accept_appointment(db, current_user, appointment_id)
+
+@router.patch("/{appointment_id}/decline")
+@router.post("/{appointment_id}/decline")
+def decline_appointment(
+    appointment_id: str,
+    payload: Optional[DoctorAppointmentRejectRequest] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Decline a pending appointment request with optional reason (Doctor only).
+    """
+    if str(getattr(current_user.role, 'value', current_user.role)).upper() not in ["DOCTOR"]:
+        raise AppException(status_code=status.HTTP_403_FORBIDDEN, message="Only doctors are authorized to decline appointment requests")
+    req_payload = payload or DoctorAppointmentRejectRequest(reason="Doctor unavailable at requested time")
+    return doctor_service.reject_appointment(db, current_user, appointment_id, req_payload)

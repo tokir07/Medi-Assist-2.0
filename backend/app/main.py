@@ -11,6 +11,8 @@ from app.core.redis import init_redis_client, close_redis_client
 from app.database.database import engine, Base
 from app.middleware.request_tracing import RequestTracingMiddleware
 from app.utils.exceptions import AppException, app_exception_handler, http_exception_handler
+from app.database.models import User, UserRole, Doctor, Patient
+from app.models.patient_portal import Consultation, ConsultationQuestion, ConsultationAnswer, VoiceSession, VoiceMessage, ClinicalHistory
 from app.models.medical_record import MedicalRecord
 from app.models.prescription import Prescription, MedicationReminder
 from app.models.appointment import Appointment
@@ -19,11 +21,15 @@ from app.models.reminder import PatientReminder, ReminderHistoryLog
 from app.models.settings import UserSettings, UserLoginHistory, UserDeviceSession
 from app.models.ai_conversation import AIConversation, AIMessage, AISummary
 from app.models.admin import Organization, Department, AuditLog, SystemConfiguration, AdminPushNotification
-from app.routers import auth, patient, doctor, admin, profile, dashboard, consultation, voice, history, health, records, prescriptions, appointments, health_tips, reminders, settings as settings_router, quick_ai, ai_assistant
+from app.models.chat import ChatConversation, ChatMessage
+from app.routers import auth, patient, doctor, admin, profile, dashboard, consultation, voice, history, health, records, prescriptions, appointments, health_tips, reminders, settings as settings_router, quick_ai, ai_assistant, chat
 
-# Setup logger
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("mediassist")
+from app.core.config import settings
+from app.core.logging_config import setup_logging, get_logger
+
+# Setup logging system
+setup_logging("INFO")
+logger = get_logger("MAIN")
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -79,6 +85,7 @@ app.include_router(reminders.router, prefix=settings.API_V1_STR)
 app.include_router(settings_router.router, prefix=settings.API_V1_STR)
 app.include_router(quick_ai.router, prefix=settings.API_V1_STR)
 app.include_router(ai_assistant.router, prefix=settings.API_V1_STR)
+app.include_router(chat.router, prefix=settings.API_V1_STR)
 
 @app.get("/")
 def root():

@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useAuth } from '../../context/AuthContext';
-import { chatService } from '../../services/chatService';
-import type { ChatConversation, ChatMessage } from '../../services/chatService';
+import { useAuth } from '../context/AuthContext';
+import { chatService } from '../services/chatService';
+import type { ChatConversation, ChatMessage } from '../services/chatService';
 import { Search, Send, CheckCheck, Check, MessageSquare, ShieldCheck, User } from 'lucide-react';
 
-export const DoctorMessagesPage: React.FC = () => {
+export const MessagesPage: React.FC = () => {
   const { user } = useAuth();
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [activeConv, setActiveConv] = useState<ChatConversation | null>(null);
@@ -26,7 +26,7 @@ export const DoctorMessagesPage: React.FC = () => {
     }
   }, [sending]);
 
-  // 1. Load doctor conversations
+  // 1. Fetch conversations on load
   const loadConversations = async () => {
     try {
       setLoading(true);
@@ -37,7 +37,7 @@ export const DoctorMessagesPage: React.FC = () => {
         setActiveConv(data[0]);
       }
     } catch (err: any) {
-      console.error('Failed to load doctor conversations:', err);
+      console.error('Failed to load conversations:', err);
       setErrorMsg(err.response?.data?.message || 'Failed to load conversations');
     } finally {
       setLoading(false);
@@ -48,7 +48,7 @@ export const DoctorMessagesPage: React.FC = () => {
     loadConversations();
   }, []);
 
-  // 2. Load messages for active conversation
+  // 2. Fetch messages when active conversation changes
   useEffect(() => {
     if (!activeConv) return;
 
@@ -58,6 +58,7 @@ export const DoctorMessagesPage: React.FC = () => {
         const res = await chatService.getMessages(activeConv.id);
         if (isMounted) {
           setMessages(res.messages);
+          // Update unread count in state
           setConversations((prev) =>
             prev.map((c) => (c.id === activeConv.id ? { ...c, unread_count: 0 } : c))
           );
@@ -74,12 +75,12 @@ export const DoctorMessagesPage: React.FC = () => {
     };
   }, [activeConv?.id]);
 
-  // 3. Auto-scroll
+  // 3. Auto-scroll to bottom of messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // 4. WebSocket setup
+  // 4. WebSocket Real-time listener setup
   useEffect(() => {
     if (!user?.id) return;
 
@@ -95,7 +96,7 @@ export const DoctorMessagesPage: React.FC = () => {
       } catch (e) {}
     }
     const wsUrl = `${protocol}//${host}/api/chat/ws/${user.id}`;
-
+    
     try {
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
@@ -114,17 +115,21 @@ export const DoctorMessagesPage: React.FC = () => {
         } catch (e) {}
       };
 
-      ws.onerror = () => {};
+      ws.onerror = () => {
+        // Silent fallback to REST queries
+      };
 
       return () => {
         if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
           ws.close();
         }
       };
-    } catch (e) {}
+    } catch (e) {
+      // Silent fallback
+    }
   }, [user?.id, activeConv?.id]);
 
-  // 5. Send message from doctor
+  // 5. Send message
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputText.trim() || !activeConv || sending) return;
@@ -136,7 +141,8 @@ export const DoctorMessagesPage: React.FC = () => {
     try {
       const newMsg = await chatService.sendMessage(activeConv.id, textToSend);
       setMessages((prev) => [...prev, newMsg]);
-
+      
+      // Update local conversation preview
       setConversations((prev) =>
         prev.map((c) =>
           c.id === activeConv.id
@@ -147,7 +153,7 @@ export const DoctorMessagesPage: React.FC = () => {
     } catch (err: any) {
       console.error('Failed to send message:', err);
       setErrorMsg(err.response?.data?.message || 'Failed to send message');
-      setInputText(textToSend);
+      setInputText(textToSend); // restore on error
     } finally {
       setSending(false);
     }
@@ -155,7 +161,7 @@ export const DoctorMessagesPage: React.FC = () => {
 
   const filteredConversations = conversations.filter((c) =>
     c.other_participant.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (c.other_participant.phone && c.other_participant.phone.includes(searchQuery))
+    (c.other_participant.specialty && c.other_participant.specialty.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
   return (
@@ -164,24 +170,25 @@ export const DoctorMessagesPage: React.FC = () => {
       <div className="px-6 py-3 bg-white border-b border-slate-200 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <MessageSquare className="w-5 h-5 text-teal-600" />
-          <h1 className="text-base font-semibold text-slate-900">Doctor-Patient Messaging</h1>
+          <h1 className="text-base font-semibold text-slate-900">Patient Messages</h1>
         </div>
         <div className="flex items-center gap-2 text-xs text-slate-500 bg-slate-100 px-3 py-1 rounded-md">
           <ShieldCheck className="w-4 h-4 text-teal-600" />
-          <span>Active Confirmed Consultations</span>
+          <span>Confirmed Doctor Communication</span>
         </div>
       </div>
 
-      {/* Main Container */}
+      {/* Main Grid */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left Sidebar: Patients List */}
+        {/* Left Sidebar: Conversations List */}
         <div className="w-80 md:w-96 bg-white border-r border-slate-200 flex flex-col">
+          {/* Search Bar */}
           <div className="p-3 border-b border-slate-200">
             <div className="relative">
               <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
               <input
                 type="text"
-                placeholder="Search patient name..."
+                placeholder="Search doctor or specialty..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500 text-slate-900 placeholder:text-slate-400"
@@ -189,15 +196,16 @@ export const DoctorMessagesPage: React.FC = () => {
             </div>
           </div>
 
+          {/* List Content */}
           <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
             {loading ? (
-              <div className="p-8 text-center text-xs text-slate-500">Loading patient chats...</div>
+              <div className="p-8 text-center text-xs text-slate-500">Loading messages...</div>
             ) : filteredConversations.length === 0 ? (
               <div className="p-8 text-center">
-                <User className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                <p className="text-xs font-medium text-slate-700">No active patient chats</p>
+                <MessageSquare className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                <p className="text-xs font-medium text-slate-700">No conversations yet</p>
                 <p className="text-[11px] text-slate-500 mt-1 max-w-[200px] mx-auto">
-                  Patient messaging opens when an appointment request is confirmed.
+                  Messaging becomes available after your appointment is confirmed.
                 </p>
               </div>
             ) : (
@@ -216,6 +224,7 @@ export const DoctorMessagesPage: React.FC = () => {
                       isActive ? 'bg-teal-50/70 border-l-4 border-teal-600' : 'hover:bg-slate-50'
                     }`}
                   >
+                    {/* Avatar */}
                     <div className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center text-slate-600 font-semibold text-xs shrink-0 overflow-hidden border border-slate-300">
                       {conv.other_participant.image ? (
                         <img
@@ -228,6 +237,7 @@ export const DoctorMessagesPage: React.FC = () => {
                       )}
                     </div>
 
+                    {/* Meta */}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between mb-0.5">
                         <span className="text-xs font-semibold text-slate-900 truncate">
@@ -235,8 +245,8 @@ export const DoctorMessagesPage: React.FC = () => {
                         </span>
                         <span className="text-[10px] text-slate-400 shrink-0">{formattedTime}</span>
                       </div>
-                      <p className="text-[11px] text-slate-500 font-medium truncate mb-1">
-                        Patient
+                      <p className="text-[11px] text-teal-700 font-medium truncate mb-1">
+                        {conv.other_participant.specialty || 'Doctor'}
                       </p>
                       <div className="flex items-center justify-between">
                         <p className="text-[11px] text-slate-500 truncate max-w-[180px]">
@@ -256,13 +266,14 @@ export const DoctorMessagesPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Right Pane: Messages Stream */}
+        {/* Right Pane: Active Conversation */}
         <div className="flex-1 flex flex-col bg-white">
           {activeConv ? (
             <>
+              {/* Active Header */}
               <div className="px-6 py-3 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
                 <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center font-bold text-xs border border-slate-300">
+                  <div className="w-9 h-9 rounded-full bg-teal-100 text-teal-800 flex items-center justify-center font-bold text-xs border border-teal-200">
                     {activeConv.other_participant.name.charAt(0)}
                   </div>
                   <div>
@@ -270,12 +281,13 @@ export const DoctorMessagesPage: React.FC = () => {
                       {activeConv.other_participant.name}
                     </h2>
                     <p className="text-[11px] text-slate-500">
-                      Confirmed Patient Consultation
+                      {activeConv.other_participant.specialty} • {activeConv.other_participant.hospital || 'MediAssist Network'}
                     </p>
                   </div>
                 </div>
               </div>
 
+              {/* Error Notice if any */}
               {errorMsg && (
                 <div className="px-4 py-2 bg-red-50 text-red-700 text-xs border-b border-red-100 flex items-center justify-between">
                   <span>{errorMsg}</span>
@@ -285,6 +297,7 @@ export const DoctorMessagesPage: React.FC = () => {
                 </div>
               )}
 
+              {/* Messages Body */}
               <div className="flex-1 p-6 overflow-y-auto bg-slate-50/30 space-y-4">
                 {messages.map((msg) => {
                   if (msg.message_type === 'SYSTEM') {
@@ -297,7 +310,7 @@ export const DoctorMessagesPage: React.FC = () => {
                     );
                   }
 
-                  const isMe = msg.sender_role === 'DOCTOR';
+                  const isMe = msg.sender_role === 'PATIENT';
                   const formattedTime = new Date(msg.created_at).toLocaleTimeString([], {
                     hour: '2-digit',
                     minute: '2-digit',
@@ -342,7 +355,7 @@ export const DoctorMessagesPage: React.FC = () => {
                 <input
                   ref={inputRef}
                   type="text"
-                  placeholder="Type a message to your patient..."
+                  placeholder="Type a message to your doctor..."
                   value={inputText}
                   onChange={(e) => setInputText(e.target.value)}
                   disabled={sending}
@@ -351,7 +364,7 @@ export const DoctorMessagesPage: React.FC = () => {
                 <button
                   type="submit"
                   disabled={!inputText.trim() || sending}
-                  className="px-4 py-2 bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white text-xs font-medium rounded-lg flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+                  className="px-4 py-2 bg-teal-700 hover:bg-teal-800 disabled:opacity-50 text-white text-xs font-medium rounded-lg flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
                 >
                   <span>Send</span>
                   <Send className="w-3.5 h-3.5" />
@@ -361,11 +374,11 @@ export const DoctorMessagesPage: React.FC = () => {
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
               <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mb-3 border border-slate-200">
-                <User className="w-6 h-6" />
+                <MessageSquare className="w-6 h-6" />
               </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">Select a Patient</h3>
+              <h3 className="text-sm font-semibold text-slate-900 mb-1">Select a Conversation</h3>
               <p className="text-xs text-slate-500 max-w-xs">
-                Select a patient with a confirmed appointment to start or respond to messaging.
+                Choose a confirmed doctor from the sidebar to start or continue your consultation chat.
               </p>
             </div>
           )}

@@ -13,12 +13,15 @@ from app.models.ai_conversation import AIConversation, AIMessage, AISummary
 from app.models.appointment import Appointment
 from app.models.prescription import Prescription
 from app.models.medical_record import MedicalRecord
-from app.models.reminder import PatientReminder
+from app.models.patient_portal import VoiceSession, VoiceMessage, VoiceSessionStatus
 from app.services.ai.openrouter_service import OpenRouterClinicalAIService
 from app.services.ai.safety_rules import safety_scanner
 from app.services.ai.conversation_controller import conversation_controller, NATURAL_ACKNOWLEDGEMENTS_EN, NATURAL_ACKNOWLEDGEMENTS_HI
+from app.services.ai.smart_question_engine import smart_question_engine
 
-logger = logging.getLogger("mediassist.ai.orchestrator")
+from app.core.logging_config import get_logger
+
+logger = get_logger("AI_ORCHESTRATOR")
 
 MEDIASSIST_SYSTEM_PROMPT = """You are MediAssist AI, an intelligent, empathetic, and knowledgeable assistant for the MediAssist Healthcare Web Application.
 
@@ -197,8 +200,11 @@ class AIOrchestrator:
             current_context["severity"] = f"{sev_match.group(1)}/10"
             current_context.setdefault("provenance", {})["severity"] = "PATIENT_PROVIDED"
 
+        complaint = current_context.get("chief_complaint") or "unknown"
+        complaint_text = complaint.lower() if complaint != "unknown" else "problem"
+
         # Formulate intelligent adaptive next response
-        if current_context.get("triggers_context"):
+        if current_context.get("triggers_context") and ("headache" in complaint_text or "sar" in complaint_text or "sir" in complaint_text):
             if is_hinglish:
                 current_context["adaptive_next_response"] = f"{ack} Lambi padhai ya screen time se aksar eye strain ya tension headache ho sakta hai. Kya aapne paani theek se piya hai aur thoda break liya?"
             else:
@@ -206,25 +212,25 @@ class AIOrchestrator:
             current_context["is_ready_for_review"] = True
         elif current_context.get("onset") == "unknown" and current_context.get("duration") == "unknown":
             if is_hinglish:
-                current_context["adaptive_next_response"] = f"{ack} Yeh dard kab se shuru hua hai?"
+                current_context["adaptive_next_response"] = f"{ack} Yeh {complaint_text} kab se ho raha hai?"
             else:
-                current_context["adaptive_next_response"] = f"{ack} When did you first notice the headache starting?"
-        elif current_context.get("location") == "unknown":
+                current_context["adaptive_next_response"] = f"{ack} When did you first notice this {complaint_text} starting?"
+        elif current_context.get("location") == "unknown" and ("headache" in complaint_text or "pain" in complaint_text or "dard" in complaint_text):
             if is_hinglish:
-                current_context["adaptive_next_response"] = f"{ack} Sir me theek kis hisse me dard ho raha hai (jaise forehead, temples ya ek taraf)?"
+                current_context["adaptive_next_response"] = f"{ack} Kripya bataiye ki yeh kis hisse me zyada mehsoos ho raha hai?"
             else:
-                current_context["adaptive_next_response"] = f"{ack} Where exactly is the pain located (e.g. forehead, temples, or one side)?"
+                current_context["adaptive_next_response"] = f"{ack} Where exactly is this most noticeable?"
         elif not current_context.get("associated_symptoms"):
             if is_hinglish:
-                current_context["adaptive_next_response"] = f"{ack} Kya iske sath nausea, chakkar ya aankhon me jalan jaisa kuch mehsoos ho raha hai?"
+                current_context["adaptive_next_response"] = f"{ack} Kya iske sath aapko koi aur symptom mehsoos ho raha hai?"
             else:
-                current_context["adaptive_next_response"] = f"{ack} Have you noticed any other symptoms like nausea, light sensitivity, or dizziness?"
+                current_context["adaptive_next_response"] = f"{ack} Have you noticed any other symptoms alongside this?"
         else:
             current_context["is_ready_for_review"] = True
             if is_hinglish:
-                current_context["adaptive_next_response"] = "Maine aapke symptoms ki zaroori jaankari note kar li hai. Kripya niche summary card me details check karein."
+                current_context["adaptive_next_response"] = "Maine aapke symptoms ki zaroori jaankari note kar li hai. Kripya details check karein."
             else:
-                current_context["adaptive_next_response"] = "I've noted the key details of your symptoms. Please review your summary card below to confirm."
+                current_context["adaptive_next_response"] = "I've noted the key details of your symptoms. Please review your summary."
 
         return current_context
 
@@ -325,6 +331,7 @@ class AIOrchestrator:
         db: Session
     ) -> Dict[str, Any]:
         start_time = time.time()
+        logger.info(f"[STEP 1/5] Received chat message for conversation '{conversation_id}' (patient_id={patient_id}): '{user_message[:40]}...'")
 
         # 1. Fetch or create conversation
         conv = db.query(AIConversation).filter(
@@ -336,13 +343,14 @@ class AIOrchestrator:
             conv = AIConversation(
                 id=conversation_id,
                 patient_id=patient_id,
-                title="Voice Consultation",
+                title="AI Assistant",
                 consultation_state="IN_PROGRESS",
                 structured_context=json.dumps(self._get_initial_context())
             )
             db.add(conv)
             db.commit()
             db.refresh(conv)
+            logger.info(f"[STEP 1/5 SUCCESS] Created new AIConversation id={conv.id}")
 
         # 2. Save User Message
         user_msg = AIMessage(
@@ -353,6 +361,31 @@ class AIOrchestrator:
         )
         db.add(user_msg)
         db.commit()
+
+        # Save User Message into VoiceSession / VoiceMessage ONLY if an active voice session exists
+        v_session = db.query(VoiceSession).filter(
+            VoiceSession.ai_conversation_id == conv.id,
+            VoiceSession.patient_id == patient_id
+        ).order_by(desc(VoiceSession.started_at)).first()
+
+        seq_user = 0
+        if v_session:
+            last_vmsg = db.query(VoiceMessage).filter(
+                VoiceMessage.voice_session_id == v_session.id
+            ).order_by(desc(VoiceMessage.sequence_number)).first()
+
+            seq_user = (last_vmsg.sequence_number + 1) if last_vmsg else 1
+
+            user_vmsg = VoiceMessage(
+                voice_session_id=v_session.id,
+                role="user",
+                content=user_message,
+                sequence_number=seq_user,
+                message_type="voice_transcription",
+                timestamp=datetime.now(timezone.utc)
+            )
+            db.add(user_vmsg)
+            db.commit()
 
         # 3. Load Structured Context
         try:
@@ -620,7 +653,40 @@ class AIOrchestrator:
 
         duration_ms = (time.time() - start_time) * 1000
 
-        # Save AI Message
+        # Smart Question Engine & Question Repetition Guard Check
+        session_state = structured_ctx.get("smart_engine_state") or smart_question_engine.initialize_session_state()
+        session_state = smart_question_engine.extract_facts_from_utterance(user_message, session_state)
+        smart_mode, smart_topic = smart_question_engine.detect_conversation_mode(user_message, session_state)
+        session_state["conversation_mode"] = smart_mode
+        session_state["current_topic"] = smart_topic
+
+        # Verify proposed AI question repetition
+        if "?" in ai_response_text and smart_mode == "HEALTH_CONSULTATION":
+            allowed, reason = smart_question_engine.is_question_allowed(ai_response_text, session_state)
+            if not allowed:
+                logger.info(f"QUESTION REPETITION GUARD BLOCKED candidate question: '{ai_response_text}' ({reason})")
+                ack = self._get_dynamic_ack(is_hinglish)
+                if smart_question_engine.should_stop_questioning(session_state):
+                    if is_hinglish:
+                        ai_response_text = f"{ack} Maine aapke symptoms note kar liye hain. Aaram karein, paani piyein aur zarurat hone par doctor se consult karein."
+                    else:
+                        ai_response_text = f"{ack} Thank you for sharing your symptoms. Please take rest, stay hydrated, and consult a doctor if needed."
+                else:
+                    ans_info = session_state.get("answered_information", {})
+                    if "severity" not in ans_info:
+                        ai_response_text = f"{ack} Yeh dikkat kitni zyada hai—mild, moderate ya severe?" if is_hinglish else f"{ack} How severe is this concern right now—mild, moderate, or severe?"
+                    elif "associated_symptoms" not in ans_info and not ans_info.get("associated_symptoms_denied"):
+                        ai_response_text = f"{ack} Kya iske sath koi aur symptom mehsoos ho raha hai?" if is_hinglish else f"{ack} Are you experiencing any other symptoms alongside this?"
+                    else:
+                        ai_response_text = f"{ack} Saari details note kar li hain. Rest karein aur paani piyein." if is_hinglish else f"{ack} All details have been recorded. Please rest and drink plenty of water."
+
+        if "?" in ai_response_text and smart_mode == "HEALTH_CONSULTATION":
+            session_state = smart_question_engine.record_asked_question(ai_response_text, session_state)
+
+        structured_ctx["smart_engine_state"] = session_state
+        conv.structured_context = json.dumps(structured_ctx)
+
+        # Save AI Message into AIConversation
         ai_msg = AIMessage(
             conversation_id=conv.id,
             sender_role="ai",
@@ -634,6 +700,45 @@ class AIOrchestrator:
         db.add(ai_msg)
         conv.summary_preview = user_message[:60]
         conv.updated_at = datetime.now(timezone.utc)
+
+        # Save AI Message into VoiceMessage ONLY if an active VoiceSession exists
+        if v_session:
+            seq_ai = seq_user + 1
+            ai_vmsg = VoiceMessage(
+                voice_session_id=v_session.id,
+                role="assistant",
+                content=ai_response_text,
+                sequence_number=seq_ai,
+                message_type="assistant_response",
+                timestamp=datetime.now(timezone.utc),
+                metadata_json=json.dumps({"intent": intent, "model": settings.OPENROUTER_MODEL or "openai/gpt-4o-mini"})
+            )
+            db.add(ai_vmsg)
+
+            # Update VoiceSession metadata
+            v_session.conversation_mode = smart_mode
+            v_session.status = VoiceSessionStatus.LISTENING
+            ans_facts = session_state.get("answered_information", {})
+
+            kp = []
+            if ans_facts.get("chief_complaint"):
+                kp.append(f"{ans_facts.get('chief_complaint')} reported")
+            if ans_facts.get("onset"):
+                kp.append(f"Started: {ans_facts.get('onset')}")
+            if ans_facts.get("location"):
+                kp.append(f"Location: {ans_facts.get('location')}")
+            if ans_facts.get("severity"):
+                kp.append(f"Severity: {ans_facts.get('severity')}")
+            if ans_facts.get("triggers_context"):
+                kp.append(f"Context: {ans_facts.get('triggers_context')}")
+
+            if kp:
+                v_session.key_points = json.dumps(kp)
+                v_session.extracted_medical_context = json.dumps(ans_facts)
+                v_session.summary = f"Patient discussed {ans_facts.get('chief_complaint', 'health concern')} (Onset: {ans_facts.get('onset', 'N/A')}, Location: {ans_facts.get('location', 'N/A')})."
+
+            v_session.updated_at = datetime.now(timezone.utc)
+
         db.commit()
         db.refresh(ai_msg)
 

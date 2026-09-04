@@ -72,7 +72,14 @@ export const AppointmentCard: React.FC<AppointmentCardProps> = ({
     if (s === 'pending') {
       return (
         <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-[#FFFBEB] text-[#D99500] border border-[#D99500]/20">
-          Pending
+          Pending Doctor Approval
+        </span>
+      );
+    }
+    if (s === 'declined' || s === 'rejected') {
+      return (
+        <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-[#FEF2F2] text-[#D64545] border border-[#D64545]/20">
+          Declined
         </span>
       );
     }

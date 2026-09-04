@@ -49,12 +49,24 @@ export interface DoctorPatientDetail {
   reports: any[];
   prescriptions: any[];
   appointments: any[];
+  ai_conversations?: any[];
+  voice_sessions?: any[];
   emergency_contact?: any;
   ai_health_summary?: {
     title: string;
     summary: string;
     disclaimer: string;
     created_at?: string;
+  } | null;
+  consolidated_summary?: {
+    title: string;
+    summary: string;
+    recent_concerns?: string;
+    key_report_findings?: string;
+    active_medications?: string;
+    generated_at?: string;
+    version?: number;
+    disclaimer?: string;
   } | null;
 }
 
@@ -204,6 +216,21 @@ export const doctorService = {
 
   async askDoctorQuickAI(query: string, patient_id?: string): Promise<any> {
     const res = await api.post('/doctor/quick-ai', { query, patient_id });
+    return res.data;
+  },
+
+  async getAIConversationTranscript(patientId: string, conversationId: string): Promise<any> {
+    const res = await api.get(`/doctor/patients/${patientId}/ai-conversations/${conversationId}`);
+    return res.data;
+  },
+
+  async getVoiceSessionTranscript(patientId: string, sessionId: string): Promise<any> {
+    const res = await api.get(`/doctor/patients/${patientId}/voice-sessions/${sessionId}`);
+    return res.data;
+  },
+
+  async generatePatientMedicalSummary(patientId: string): Promise<any> {
+    const res = await api.post(`/doctor/patients/${patientId}/medical-summary/generate`);
     return res.data;
   }
 };
