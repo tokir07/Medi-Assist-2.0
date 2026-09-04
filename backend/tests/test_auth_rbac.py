@@ -24,20 +24,23 @@ def test_health_check():
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
 
-def test_google_auth_unregistered_email_returns_404():
+def test_google_auth_unregistered_email_auto_creates_account():
     random_email = f"patient_{uuid.uuid4().hex[:8]}@gmail.com"
     response = client.post("/api/auth/google", json={
         "dev_email": random_email
     })
-    assert response.status_code == 404
+    assert response.status_code == 200
     data = response.json()
-    error_msg = data.get("message") or data.get("detail", "")
-    assert "ACCOUNT_NOT_FOUND" in error_msg
+    assert data["success"] is True
+    assert data["data"]["user"]["email"] == random_email
+    assert data["data"]["user"]["role"] == "PATIENT"
 
 def test_register_new_patient_account():
     random_email = f"newpatient_{uuid.uuid4().hex[:8]}@gmail.com"
     response = client.post("/api/auth/register", json={
-        "dev_email": random_email
+        "email": random_email,
+        "name": "New Patient",
+        "password": "Password123!"
     })
     assert response.status_code == 200
     data = response.json()
@@ -49,16 +52,16 @@ def test_register_new_patient_account():
 
 def test_google_auth_existing_patient_login():
     response = client.post("/api/auth/google", json={
-        "dev_email": "patient@example.com"
+        "dev_email": "patient@mediassist.test"
     })
     assert response.status_code == 200
     data = response.json()
     assert data["data"]["user"]["role"] == "PATIENT"
-    assert data["data"]["user"]["email"] == "patient@example.com"
+    assert data["data"]["user"]["email"] == "patient@mediassist.test"
 
 def test_google_auth_provisioned_doctor_login():
     response = client.post("/api/auth/google", json={
-        "dev_email": "doctor@example.com"
+        "dev_email": "doctor@mediassist.test"
     })
     assert response.status_code == 200
     data = response.json()
@@ -99,7 +102,7 @@ def test_unauthenticated_access_returns_401():
 
 def test_patient_rbac_access():
     auth_resp = client.post("/api/auth/google", json={
-        "dev_email": "patient@example.com"
+        "dev_email": "patient@mediassist.test"
     })
     token = auth_resp.json()["data"]["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
@@ -112,7 +115,7 @@ def test_patient_rbac_access():
 
 def test_doctor_rbac_access():
     auth_resp = client.post("/api/auth/google", json={
-        "dev_email": "doctor@example.com"
+        "dev_email": "doctor@mediassist.test"
     })
     token = auth_resp.json()["data"]["access_token"]
     headers = {"Authorization": f"Bearer {token}"}

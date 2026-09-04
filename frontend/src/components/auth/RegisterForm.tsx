@@ -3,11 +3,31 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { Alert } from '../common/Alert';
 import { SecurityBadge } from '../common/SecurityBadge';
+import { SocialLogin } from './SocialLogin';
 import { User as UserIcon, Mail, Phone, Lock, Eye, EyeOff, Info, CheckCircle2 } from 'lucide-react';
 
 export const RegisterForm: React.FC = () => {
-  const { register, login } = useAuth();
+  const { register, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
+
+  const handleGoogleAuth = async () => {
+    setFormError(null);
+    setLoading(true);
+    try {
+      const userRole = await loginWithGoogle();
+      if (userRole === 'DOCTOR') {
+        navigate('/doctor');
+      } else if (userRole === 'ADMIN') {
+        navigate('/admin');
+      } else {
+        navigate('/patient');
+      }
+    } catch (err: any) {
+      setFormError(err.message || 'Google registration failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -204,6 +224,17 @@ export const RegisterForm: React.FC = () => {
             )}
           </button>
         </form>
+
+        <div className="relative my-5">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t border-slate-200" />
+          </div>
+          <div className="relative flex justify-center text-xs uppercase">
+            <span className="bg-white px-3 text-slate-500 font-medium">Or continue with</span>
+          </div>
+        </div>
+
+        <SocialLogin onGoogleClick={handleGoogleAuth} disabled={loading} />
 
         <div className="mt-6 text-center text-xs text-slate-600">
           Already have an account?{' '}

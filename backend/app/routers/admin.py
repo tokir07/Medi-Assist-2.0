@@ -31,6 +31,14 @@ from app.schemas.admin import (
 
 router = APIRouter(prefix="/admin", tags=["Admin Portal Management"])
 
+@router.get("/test")
+def admin_test_endpoint(current_user: User = Depends(require_roles([UserRole.ADMIN]))):
+    return {
+        "message": "Admin endpoint accessed successfully",
+        "role": current_user.role.value if hasattr(current_user.role, 'value') else str(current_user.role),
+        "user": current_user.name
+    }
+
 # ============================================================
 # 1. Admin Dashboard
 # ============================================================

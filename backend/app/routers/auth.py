@@ -112,11 +112,28 @@ async def google_auth(request: GoogleLoginRequest, db: Session = Depends(get_db)
     # 2. Query PostgreSQL database for existing user
     user = db.query(User).filter((User.google_sub == google_sub) | (User.email == email)).first()
 
+    # Auto-register new Patient account if no account exists
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="ACCOUNT_NOT_FOUND: No MediAssist account found for this email. Please Create Account.",
+        display_name = identity.get("name") or email.split("@")[0].replace(".", " ").title()
+        user = User(
+            email=email,
+            name=display_name,
+            role=UserRole.PATIENT,
+            google_sub=google_sub,
+            profile_image=picture,
+            is_active=True,
+            is_onboarded=True,
         )
+        db.add(user)
+        db.flush()
+
+        patient_record = Patient(
+            user_id=user.id,
+            gender="Not Specified",
+        )
+        db.add(patient_record)
+        db.commit()
+        db.refresh(user)
 
     # 3. Update google_sub & avatar if missing
     if not user.google_sub:
